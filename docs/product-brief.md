@@ -4,7 +4,7 @@
 
 Planning a movie, dinner, or campus event with friends can fizzle during the back-and-forth. Personal agents help existing student friends turn conditional interest into a social plan by exchanging relevant constraints.
 
-At least one person must have sparked interest in doing something, but everyone else need not be initially interested or motivated. A plan may start from an incomplete suggestion such as "Dinner Friday?" before anyone chooses a restaurant, exact time, or budget. A useful result may be that current replies and known options do not yield a willing attendee set. This does not prove that no real-world plan exists.
+At least one person must have sparked interest in doing something, but everyone else need not be initially interested or motivated. A plan may start from an incomplete suggestion such as "Dinner Friday?" before anyone chooses a restaurant, exact time, or budget. A useful outcome can be that no willing attendee set fits the current replies and known options. That does not prove that no real-world plan exists.
 
 ## First build
 
@@ -21,21 +21,25 @@ The first version should account for availability, spending limits, activities a
 
 If a condition's meaning or strictness is unclear, the agent asks its own user a focused question. Before negotiation, each agent shows its user a short, editable summary of its interpretation. The agent does not silently guess at strict limits.
 
-A smaller willing group may proceed if each attendee's conditions hold. A person who does not attend does not automatically veto the others' plan. Attendance dependencies can be evaluated together against one proposed attendee set. Mutually dependent people do not need unconditional prior commitments, but each must explicitly confirm that same plan through their own agent. A missing named person may block another participant's attendance dependency.
+A smaller willing group may proceed if each attendee's conditions hold. A person who does not attend does not automatically veto the others' plan. Attendance dependencies can be evaluated together against one proposed attendee set. Mutually dependent people do not need unconditional prior commitments, but each must explicitly confirm that same plan through their own agent. A missing named person may make another participant ineligible. For example, if Bob will attend only if Maya attends, Maya's absence can make Bob ineligible.
 
-Agents explain feasible options and tradeoffs in simple terms so people can choose. The product does not automatically prioritize maximum attendance or assign numeric scores. Which person or people have final authority when choices conflict remains open.
+Agents explain feasible options and tradeoffs in simple terms so people can choose. The product does not automatically prioritize the largest group. Which person or people have final authority when choices conflict remains open.
 
 Each agent asks its own user to approve the plan. The user makes the decision; the agent does not commit on the user's behalf. A confirmation covers the activity, time, estimated cost, and attendee list. Booking and payment are outside the first version.
 
-The intended sharing policy keeps each student's budget caps, other raw constraints, and personal reasons private to that student and their own agent. Other agents and the shared planning context may see only offer details the participant approves for sharing, such as proposed attendees, time, and estimated cost. Offers and refusals may still reveal clues.
+The intended sharing policy keeps each student's budget caps, other raw constraints, and personal reasons private to that student and their own agent. Other agents and the shared planning context receive only approved offer details, such as proposed attendees, time, and estimated cost. Offers and refusals may still reveal clues.
 
 ## Chosen first-version interaction
 
 The first version is a web app. An initiator starts a plan and manually shares an invitation link in the friends' existing group chat. Friends open the invite and talk privately with their own personal agent for that outing. The agents negotiate in the app, and people review and confirm the plan there. Participants do not install agents. Native iMessage or WhatsApp integration is not required.
 
-## Deadline and confirmation changes
+## Response cutoff and confirmation
 
-The initiator sets a decision deadline. Silence never counts as agreement. At the deadline, the process can identify a willing attendee set that may proceed or report that current replies and known options do not yield one. How that latter outcome is described remains open, as does whether the decision deadline is also the cutoff for final confirmation.
+The initiator sets a response cutoff. A person who has not replied by the cutoff is not part of the current proposed group. This establishes only that they did not respond in time; their reason is unknown. It must not be interpreted as a decline, loss of interest, or unavailability.
+
+After the cutoff, the process reassesses the willing attendee set against every remaining person's conditions, including strict limits and attendance dependencies. A missing named person can make another participant ineligible. Each remaining person's own agent asks them to explicitly confirm the revised activity, time, estimated cost, and attendee list. Earlier approvals for a larger group do not transfer to the revised plan. An agent cannot commit for its user, and silence is not approval.
+
+Final user confirmation may happen after the response cutoff within a finite window. The window's default length remains open. If no willing group fits the current replies and known options, the interaction can report that no workable outcome was found for this attempt. This does not prove that no real-world plan exists, and the exact wording for the outcome remains open.
 
 A material change to the activity, time, estimated cost, or attendee list requires renewed confirmation from each remaining participant. Previous approvals apply to the plan those participants approved.
 
@@ -44,7 +48,8 @@ A material change to the activity, time, estimated cost, or attendee list requir
 - Which people have final authority to select a group or plan, and how conflicting human choices are resolved
 - How participants classify conditions as strict or flexible, and how flexible preferences are ranked or balanced fairly
 - How the candidate catalog and manual options appear and are represented
-- Default deadline length, reminder delivery, late replies and joins, and handling pending confirmations at the deadline
+- The default response cutoff length, final-confirmation window length, and reminder delivery
+- Late replies, late joining or reentry, and edits after the response cutoff
 - How to handle dropouts and changes after confirmation beyond renewed approval
 - Account, sign-in, participant identity, invite access, and privacy enforcement
 - Notifications and agent lifetime beyond an outing

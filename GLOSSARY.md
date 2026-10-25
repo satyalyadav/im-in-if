@@ -31,8 +31,8 @@ A condition linking one participant's attendance to a named person's attendance.
 **Minimum group size**:
 A condition that sets the number of people needed for a participant to join.
 
-**Decision deadline**:
-A time set by the initiator for deciding whether a willing group can proceed.
+**Response cutoff**:
+An initiator-set time after which a person who has not replied is not part of the current proposed group. Their reason is unknown; final confirmation may happen afterward.
 
 **Tentative agreement**:
 A plan the agents have negotiated that remains subject to approval by the people involved.
