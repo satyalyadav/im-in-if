@@ -1,23 +1,30 @@
 # Product brief
 
-## Concept
+## Concept and problem
 
-Personal agents help existing friends turn conditional interest into an agreed social plan. Each student's agent represents that student and exchanges relevant constraints with the agents representing other students.
+Planning a movie, dinner, or campus event with friends can fizzle during the back-and-forth. Personal agents help existing student friends turn conditional interest into a social plan by exchanging relevant constraints.
 
-## Observed problem
+An interaction can be useful even if the group does not reach a workable plan. At least one person must have sparked interest in doing something, but everyone does not need to be initially interested or motivated.
 
-Planning a movie, restaurant visit, trip, or campus event often fizzles during the back-and-forth. The project explores whether personal agents can help friends move from conditional interest to an agreed plan.
+## First build
 
-## Context
+The first version covers one local outing among existing student friends. The demo is a movie night. The broader concept includes movies, dinner, and campus events; trips are outside the first build.
 
 - Cubbie Hackathon Track 2
 - Build-time budget: 12 to 16 hours
 
+## Agent and participant agreement
+
+Each student has a personal agent. The intended sharing policy keeps each student's budget caps, other raw constraints, and personal reasons private to that student and their own agent. Other agents and the shared planning context receive acceptable proposals and counteroffers instead of those raw inputs. Offers and refusals may still reveal clues.
+
+Agents negotiate tentatively. People explicitly approve the final activity, time, estimated cost, and attendees. Booking and payment are outside the first version.
+
 ## Open decisions
 
-- First scenario and scope
-- Which participation conditions matter, and how students express them
-- What information agents can share, and with whom
-- What user approval means and what counts as commitment to a plan
-- What happens when no proposal fits or someone drops out
-- App and interface choice
+- How people start the process and express initial interest
+- How people join a plan
+- Which conditions are supported and whether each is hard or flexible
+- What counts as group success, including quorum and required people
+- What happens after a confirmation change, dropout, or missing reply
+- Which interface to use
+- Where activity options come from and how to implement their selection
