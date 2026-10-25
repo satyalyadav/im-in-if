@@ -95,3 +95,52 @@ describe("versioned starter-schema upgrade", () => {
     }
   });
 });
+
+describe("version 3 migration", () => {
+  it("reconciles duplicate open tie polls before adding the unique index", async () => {
+    const pg = new PGlite();
+    try {
+      const db = createPgliteDb(pg);
+      await migrate(db);
+      const outingId = crypto.randomUUID();
+      const optionA = crypto.randomUUID();
+      const optionB = crypto.randomUUID();
+      await db.query(
+        `insert into outings (id, starter_user_id, suggestion, cutoff_at, cutoff_time_zone)
+         values ($1, 'starter', 'Migration tie fixture', now() + interval '1 day', 'UTC')`,
+        [outingId],
+      );
+      await db.query(
+        `insert into outing_options
+          (id, outing_id, created_by_user_id, title, activity, starts_at, estimated_cost_cents, activity_tags, source)
+         values ($1, $2, 'starter', 'A', 'Movie', now() + interval '1 day', 900, '["movie"]', 'sample'),
+                ($3, $2, 'starter', 'B', 'Movie', now() + interval '1 day', 1000, '["movie"]', 'sample')`,
+        [optionA, outingId, optionB],
+      );
+      await db.query(`drop index if exists tie_polls_one_open_idx`);
+      for (const key of ["a:b", "a:c"]) {
+        await db.query(
+          `insert into tie_polls
+            (id, outing_id, tie_key, option_a_id, option_b_id, participant_user_ids, status)
+           values ($1, $2, $3, $4, $5, '["starter"]'::jsonb, 'open')`,
+          [crypto.randomUUID(), outingId, key, optionA, optionB],
+        );
+      }
+      await db.query(`delete from schema_migrations where version = 3`);
+      await db.query(`drop index if exists tie_polls_one_open_idx`);
+      await migrate(db);
+
+      const open = await db.query<{ count: number }>(
+        `select count(*)::int as count from tie_polls where outing_id = $1 and status = 'open'`,
+        [outingId],
+      );
+      expect(open[0].count).toBe(1);
+      const indexes = await db.query<{ indexname: string }>(
+        `select indexname from pg_indexes where tablename = 'tie_polls'`,
+      );
+      expect(indexes.map((row) => row.indexname)).toContain("tie_polls_one_open_idx");
+    } finally {
+      await pg.close();
+    }
+  });
+});

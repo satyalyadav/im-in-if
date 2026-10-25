@@ -431,6 +431,19 @@ describe("review regressions", () => {
     );
     expect(confirmed[0].status).toBe("confirmed");
 
+    const tieOptions = await db.query<{ id: string }>(
+      `select id from outing_options where outing_id = $1 order by starts_at`, [plan.outingId],
+    );
+    const [tieA, tieB] = [tieOptions[0].id, tieOptions[1].id].sort();
+    await db.query(
+      `insert into tie_polls
+        (id, outing_id, tie_key, option_a_id, option_b_id, participant_user_ids,
+         status, outcome, selected_option_id, resolved_at)
+       values ($1, $2, $3, $4, $5, $6::jsonb, 'resolved', 'a', $4, now())`,
+      [crypto.randomUUID(), plan.outingId, `${tieA}:${tieB}`, tieOptions[0].id, tieOptions[1].id,
+        JSON.stringify([A, B])],
+    );
+
     const result = await handlePlanningAction(ctx(B), plan.outingId, { action: "request_departure" });
     expect(result).toMatchObject({ status: 200, body: { status: "renegotiation_required" } });
     const outing = await db.query<{ status: string; ended_at: string | Date | null }>(
@@ -446,6 +459,15 @@ describe("review regressions", () => {
       [plan.outingId, B],
     );
     expect(departure[0].status).toBe("accepted");
+    const tieState = await db.query<{ status: string }>(
+      `select status from tie_polls where outing_id = $1`, [plan.outingId],
+    );
+    expect(tieState[0].status).toBe("no_agreement");
+
+    const noAgreement = await handlePlanningAction(ctx(A), plan.outingId, { action: "declare_no_agreement" });
+    expect(noAgreement.status).toBe(200);
+    const ended = await db.query<{ status: string }>(`select status from outings where id = $1`, [plan.outingId]);
+    expect(ended[0].status).toBe("no_agreement");
   });
 
   it("rejects publishing an existing offer that conflicts with a resolved tie", async () => {
@@ -481,6 +503,21 @@ describe("review regressions", () => {
       action: "publish_proposal", offerId: offerB,
     });
     expect(result).toMatchObject({ status: 409, body: { error: "tie_choice_required" } });
+
+    const expired = crypto.randomUUID();
+    await db.query(
+      `insert into proposals
+        (id, outing_id, revision, created_by_user_id, option_id, activity, starts_at,
+         estimated_cost_cents, attendee_user_ids, status, kind, published_at, expires_at, condition_versions)
+       values ($1, $2, 1, $3, $4, $5, $6, $7, $8::jsonb, 'expired', 'initial',
+               now() - interval '1 hour', now() - interval '30 minutes', '{}'::jsonb)`,
+      [expired, plan.outingId, A, second.id, second.activity, second.starts_at,
+        second.estimated_cost_cents, JSON.stringify([A, B])],
+    );
+    const restart = await handlePlanningAction(ctx(B), plan.outingId, {
+      action: "restart_proposal", proposalId: expired,
+    });
+    expect(restart).toMatchObject({ status: 409, body: { error: "tie_choice_required" } });
   });
 
   it("allows an explicit no-agreement decision when no proposal was ever published", async () => {
