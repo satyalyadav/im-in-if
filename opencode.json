@@ -1,0 +1,9 @@
+{
+  "mcp": {
+    "Neon": {
+      "type": "remote",
+      "url": "https://mcp.neon.tech/mcp?projectId=polished-truth-38314900",
+      "enabled": true
+    }
+  }
+}
