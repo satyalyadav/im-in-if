@@ -12,6 +12,7 @@ The first version covers one local outing among existing student friends. The de
 
 - Cubbie Hackathon Track 2
 - Build-time budget: 12 to 16 hours
+- Out-of-pocket service budget: $0. Use free tiers only. Do not buy credits, upgrade plans, or purchase a domain; stop if the required flow needs paid usage.
 
 The first version uses a small catalog of candidate options with stated showtimes and prices. People can add options manually. Synthetic or sample entries must be labeled clearly. The catalog does not claim live discovery or verified ticket prices. Live discovery for movie showtimes, restaurants, and events is deferred.
 
@@ -41,7 +42,7 @@ A signed-in invitee who opens the shared invitation link can request admission t
 
 A person who does not respond by the response cutoff may request admission later. When that timing is permitted remains open. Admission is separate from a post-confirmation join request to add someone to the attendee list.
 
-For the demo, email approval and admission notices are in scope only for recipients who have opted in. The app should record each recipient's opt-in before sending. Email notices should contain a short return-to-app link, not private planning details. The starter always receives an in-app notice for an admission request. No email provider or sending behavior is specified or configured, and delivery is not guaranteed. Other notification channels are outside the hackathon scope.
+For the demo, email approval and admission notices are in scope only for recipients who have opted in. The app should record each recipient's opt-in before sending. Email notices should contain a short return-to-app link, not private planning details. The starter always receives an in-app notice for an admission request. The approved sender approach uses a subdomain of an existing domain; no domain purchase or DNS change has been made. The email provider, DNS write access, and sender verification remain unconfirmed, and delivery is not guaranteed. Other notification channels are outside the hackathon scope.
 
 ## Response cutoff and confirmation
 
