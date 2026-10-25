@@ -16,7 +16,7 @@ The first version covers one local outing among existing student friends. The de
 
 The first version uses a small catalog of candidate options with stated showtimes and prices. People can add options manually. Synthetic or sample entries must be labeled clearly. The catalog does not claim live discovery or verified ticket prices. Live discovery for movie showtimes, restaurants, and events is deferred.
 
-Each personal agent works on one outing and has no persistent memory beyond it. Participants provide conditions and option rankings anew for each outing; sign-in does not imply reuse of earlier preferences. Seven days after an outing or failed attempt ends, delete all app-held outing data, including private chats, conditions, rankings, offers, proposals, and approval history. Keep sign-in accounts. Past-plan archives are outside this version. This policy does not claim that model or email providers, backups, or platform logs erase their copies.
+Each personal agent works on one outing and has no persistent memory beyond it. Participants provide conditions and option rankings anew for each outing; sign-in does not imply reuse of earlier preferences. Seven days after an outing or failed attempt ends, delete all app-held outing data, including private chats, conditions, rankings, offers, proposals, and approval history. Keep sign-in accounts. Past-plan archives are outside this version. This policy does not claim that model or email providers erase their copies. Database restore history, snapshots, workflow records, and application logs must be checked before claiming the seven-day rule is implemented. The rule is approved; implementation is not verified.
 
 ## Conditions, preferences, and negotiation
 
