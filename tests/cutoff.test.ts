@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { formatZonedDateTime, resolveCutoffInstant } from "@/lib/cutoff";
+import {
+  formatZonedDateTime,
+  formatZonedTime,
+  resolveCutoffInstant,
+} from "@/lib/cutoff";
 
 describe("resolveCutoffInstant", () => {
   it("keeps a Phoenix wall time at UTC-7 year round", () => {
@@ -91,5 +95,6 @@ describe("formatZonedDateTime", () => {
     expect(formatZonedDateTime(instant, "Asia/Kolkata", "en-US")).toBe(
       "Nov 1, 2026, 8:00 AM GMT+5:30",
     );
+    expect(formatZonedTime(instant, "America/Phoenix", "en-US")).toBe("7:30 PM");
   });
 });

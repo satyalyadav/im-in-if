@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { formatViewerDateTime } from "@/lib/cutoff";
+import { formatViewerDateTime, formatZonedTime } from "@/lib/cutoff";
 import type { MessageView, OutingView } from "@/lib/outings-api";
 
 const ERROR_COPY: Record<string, string> = {
@@ -9,16 +9,13 @@ const ERROR_COPY: Record<string, string> = {
   model_error: "Your agent could not answer. Your message is saved.",
   empty_reply: "Your agent sent an empty reply. Your message is saved.",
   unavailable: "The agent is not configured yet.",
+  unauthorized: "Sign in again to send this message.",
   not_found: "This outing is no longer available.",
   invalid_input: "That message could not be sent.",
 };
 
 function timeLabel(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone,
-  }).format(new Date(iso));
+  return formatZonedTime(new Date(iso), timeZone);
 }
 
 type Props = {
@@ -137,7 +134,12 @@ export function OutingChat({ outing, initialMessages }: Props) {
 
       if (!response.ok && response.status !== 202) {
         if (!saved && response.status !== 502) setDraft(content);
-        setError(ERROR_COPY[data?.error ?? ""] ?? "Your agent did not answer. Your message is saved.");
+        setError(
+          ERROR_COPY[data?.error ?? ""] ??
+            (saved
+              ? "Your agent did not answer. Your message is saved."
+              : "Your message was not sent. Try again."),
+        );
       }
     } catch {
       setError("The connection dropped. Check the conversation before sending again.");
@@ -214,59 +216,67 @@ export function OutingChat({ outing, initialMessages }: Props) {
             </p>
           ) : null}
 
-          {messages.map((message) => (
-            <article
-              key={message.id}
-              className={`message message-${message.role}`}
-              aria-label={message.role === "user" ? "You" : "Your agent"}
-            >
-              <p className="sender">
-                {message.role === "user" ? "You" : "Your agent"}
-                <span className="message-time">
-                  {timeLabel(message.createdAt, outing.cutoffTimeZone)}
-                </span>
-              </p>
-              <div className="bubble">{message.content}</div>
+          {messages.map((message) => {
+            const retryable = !message.id.startsWith("local-");
 
-              {message.role === "user" && message.status === "pending" ? (
-                <>
-                  <p className="thinking">
-                    <span className="thinking-dot" aria-hidden="true" />
-                    {stalled
-                      ? "Still waiting for your agent."
-                      : "Your agent is thinking. This can take a moment."}
-                  </p>
-                  {stalled ? (
-                    <p className="turn-error">
-                      No reply yet.
-                      <button
-                        type="button"
-                        className="text-button"
-                        onClick={() => retry(message.id)}
-                        disabled={retrying === message.id}
-                      >
-                        {retrying === message.id ? "Asking again…" : "Ask again"}
-                      </button>
-                    </p>
-                  ) : null}
-                </>
-              ) : null}
-
-              {message.role === "user" && message.status === "failed" ? (
-                <p className="turn-error">
-                  Your message is saved.
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() => retry(message.id)}
-                    disabled={retrying === message.id}
-                  >
-                    {retrying === message.id ? "Asking again…" : "Ask again"}
-                  </button>
+            return (
+              <article
+                key={message.id}
+                className={`message message-${message.role}`}
+                aria-label={message.role === "user" ? "You" : "Your agent"}
+              >
+                <p className="sender">
+                  {message.role === "user" ? "You" : "Your agent"}
+                  <span className="message-time">
+                    {timeLabel(message.createdAt, outing.cutoffTimeZone)}
+                  </span>
                 </p>
-              ) : null}
-            </article>
-          ))}
+                <div className="bubble">{message.content}</div>
+
+                {message.role === "user" && message.status === "pending" ? (
+                  <>
+                    <p className="thinking">
+                      <span className="thinking-dot" aria-hidden="true" />
+                      {stalled
+                        ? "Still waiting for your agent."
+                        : "Your agent is thinking. This can take a moment."}
+                    </p>
+                    {stalled ? (
+                      <p className="turn-error">
+                        {retryable
+                          ? "No reply yet."
+                          : "Still sending. Check your connection."}
+                        {retryable ? (
+                          <button
+                            type="button"
+                            className="text-button"
+                            onClick={() => retry(message.id)}
+                            disabled={retrying === message.id}
+                          >
+                            {retrying === message.id ? "Asking again…" : "Ask again"}
+                          </button>
+                        ) : null}
+                      </p>
+                    ) : null}
+                  </>
+                ) : null}
+
+                {message.role === "user" && message.status === "failed" ? (
+                  <p className="turn-error">
+                    Your message is saved.
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => retry(message.id)}
+                      disabled={retrying === message.id}
+                    >
+                      {retrying === message.id ? "Asking again…" : "Ask again"}
+                    </button>
+                  </p>
+                ) : null}
+              </article>
+            );
+          })}
         </div>
 
         {error ? (

@@ -102,7 +102,7 @@ be completed until a Neon project exists. The Resend gap remains.
 
 ## Local integration evidence
 
-Automated checks (`npx vitest run`, 23 tests in 3 files):
+Automated checks (`npx vitest run`, 24 tests in 3 files):
 
 - Cutoff resolution keeps the intended instant in Phoenix, Kolkata, and New York, rejects a
   spring-forward gap, chooses the earlier occurrence of a fall-back wall time, and rejects
@@ -119,6 +119,7 @@ Automated checks (`npx vitest run`, 23 tests in 3 files):
   and one model call.
 - A failed model request leaves the user message saved with a `failed` status and no agent
   row. A retry completes the same turn without creating a second user message.
+- A failed message stays in the agent's context when the starter later sends a new message.
 - A turn that is still pending can be retried; when both the original and retry responses
   arrive, the database keeps one user row and one agent row.
 - Console methods captured during a turn contain neither the private prompt nor the reply.

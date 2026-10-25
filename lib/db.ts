@@ -23,10 +23,14 @@ const MIGRATIONS = [
     content text not null check (char_length(content) between 1 and 12000),
     client_message_id text,
     reply_to_message_id uuid references messages (id) on delete cascade,
-    status text not null check (status in ('pending', 'replied', 'failed', 'complete')),
+    status text not null,
     error_code text,
     created_at timestamptz not null default now(),
-    completed_at timestamptz
+    completed_at timestamptz,
+    constraint messages_role_status_check check (
+      (role = 'user' and status in ('pending', 'replied', 'failed'))
+      or (role = 'agent' and status = 'complete')
+    )
   )`,
   `create index if not exists messages_outing_idx on messages (outing_id, seq)`,
   `create unique index if not exists messages_client_unique

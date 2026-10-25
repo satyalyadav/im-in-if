@@ -7,7 +7,7 @@ import {
   getOuting,
   retryMessage,
   sendMessage,
-  type ApiContext,
+  type AgentContext,
 } from "@/lib/outings-api";
 
 class FakeAgent implements Agent {
@@ -40,7 +40,7 @@ afterEach(async () => {
   await pg.close();
 });
 
-function ctx(agent: Agent, userId = STARTER): ApiContext {
+function ctx(agent: Agent, userId = STARTER): AgentContext {
   return { db, agent, userId };
 }
 
@@ -287,7 +287,32 @@ describe("private agent turns", () => {
     expect(messages.filter((message) => message.role === "agent")).toHaveLength(1);
   });
 
-  it("keeps private text out of application logs", async () => {    const spies = (["log", "info", "warn", "error", "debug"] as const).map((method) =>
+  it("keeps a failed message in the agent's context when the starter moves on", async () => {
+    const outingId = await makeOuting(new FakeAgent());
+    const failing = new FakeAgent(() => {
+      throw new AgentError("model_error");
+    });
+
+    const failed = await sendMessage(ctx(failing), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "PRIVATE-FAILED-CONTEXT",
+    });
+    expect(failed.status).toBe(502);
+
+    const next = new FakeAgent();
+    const sent = await sendMessage(ctx(next), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Try a different night.",
+    });
+
+    expect(sent.status).toBe(200);
+    const history = JSON.stringify(next.calls[0]?.history);
+    expect(history).toContain("PRIVATE-FAILED-CONTEXT");
+    expect(history).toContain("Try a different night.");
+  });
+
+  it("keeps private text out of application logs", async () => {
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((method) =>
       vi.spyOn(console, method).mockImplementation(() => undefined),
     );
 

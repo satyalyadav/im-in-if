@@ -3,12 +3,12 @@ import { AgentError, type Agent } from "@/lib/agent";
 import { formatZonedDateTime, resolveCutoffInstant } from "@/lib/cutoff";
 import type { Db } from "@/lib/db";
 
-export type ReadContext = {
+export type OwnerContext = {
   db: Db;
   userId: string;
 };
 
-export type ApiContext = ReadContext & {
+export type AgentContext = OwnerContext & {
   agent: Agent;
 };
 
@@ -66,15 +66,13 @@ const createOutingSchema = z.object({
   cutoffTimeZone: z.string().min(1).max(64),
 });
 
-const sendMessageSchema = z.object({
-  clientMessageId: z
-    .string()
-    .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
-  content: z.string().trim().min(1).max(4000),
-});
-
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const sendMessageSchema = z.object({
+  clientMessageId: z.string().regex(UUID_PATTERN),
+  content: z.string().trim().min(1).max(4000),
+});
 
 function isUuid(value: string): boolean {
   return UUID_PATTERN.test(value);
@@ -127,7 +125,7 @@ async function listMessages(db: Db, outingId: string): Promise<MessageView[]> {
   return rows.map(toMessageView);
 }
 
-export async function listOutings(context: ReadContext): Promise<OutingView[]> {
+export async function listOutings(context: OwnerContext): Promise<OutingView[]> {
   const rows = await context.db.query<OutingRow>(
     `select * from outings where starter_user_id = $1 order by created_at desc limit 20`,
     [context.userId],
@@ -142,16 +140,16 @@ async function loadHistory(
 ): Promise<Array<{ role: "user" | "agent"; content: string }>> {
   const rows = await db.query<Pick<MessageRow, "role" | "content">>(
     `select role, content from messages
-      where outing_id = $1 and (role = 'agent' or status = 'replied')
+      where outing_id = $1 and seq < $2
       order by seq`,
-    [outingId],
+    [outingId, current.seq],
   );
 
   return [...rows, { role: "user" as const, content: current.content }];
 }
 
 async function generateReply(
-  context: ApiContext,
+  context: AgentContext,
   outing: OutingRow,
   userMessage: MessageRow,
   successStatus: number,
@@ -205,7 +203,7 @@ async function generateReply(
 }
 
 export async function createOuting(
-  context: ReadContext,
+  context: OwnerContext,
   input: unknown,
 ): Promise<ApiResponse> {
   const parsed = createOutingSchema.safeParse(input);
@@ -242,7 +240,7 @@ export async function createOuting(
 }
 
 export async function getOuting(
-  context: ReadContext,
+  context: OwnerContext,
   outingId: string,
 ): Promise<ApiResponse> {
   if (!isUuid(outingId)) return { status: 404, body: { error: "not_found" } };
@@ -259,7 +257,7 @@ export async function getOuting(
 }
 
 export async function sendMessage(
-  context: ApiContext,
+  context: AgentContext,
   outingId: string,
   input: unknown,
 ): Promise<ApiResponse> {
@@ -311,7 +309,7 @@ export async function sendMessage(
 }
 
 export async function retryMessage(
-  context: ApiContext,
+  context: AgentContext,
   outingId: string,
   messageId: string,
 ): Promise<ApiResponse> {

@@ -103,6 +103,18 @@ export function formatZonedDateTime(
   }).format(instant);
 }
 
+export function formatZonedTime(
+  instant: Date,
+  timeZone: string,
+  locale = DISPLAY_LOCALE,
+): string {
+  return new Intl.DateTimeFormat(locale, {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(instant);
+}
+
 export function formatViewerDateTime(instant: Date, locale?: string): string {
   return new Intl.DateTimeFormat(locale, {
     year: "numeric",
