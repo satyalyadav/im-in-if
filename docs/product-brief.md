@@ -21,6 +21,8 @@ The first version should account for availability, spending limits, activities a
 
 If a condition's meaning or strictness is unclear, the agent asks its own user a focused question. Before negotiation, each agent shows its user a short, editable summary of its interpretation. The agent does not silently guess at strict limits.
 
+Participants may privately rank workable options, such as preferring a 7 PM movie while also accepting dinner. Their own agent uses those choices to negotiate and explain proposals. A ranking is not approval; every person included in a proposed plan must still explicitly confirm it.
+
 A smaller willing group may proceed if each attendee's conditions hold. A person who does not attend does not automatically veto the others' plan. Attendance dependencies can be evaluated together against one proposed attendee set. Mutually dependent people do not need unconditional prior commitments, but each must explicitly confirm that same plan through their own agent. A missing named person may make another participant ineligible. For example, if Bob will attend only if Maya attends, Maya's absence can make Bob ineligible.
 
 Agents explain feasible options and tradeoffs in simple terms. The product does not impose an attendance-first choice. The starter may decide the initial direction, but everyone contacted about the plan should have a say afterward. The selection method, tie handling, and the starter's later role remain open.
@@ -31,7 +33,7 @@ The intended sharing policy keeps each student's budget caps, other raw constrai
 
 ## Chosen first-version interaction
 
-The first version is a web app. An initiator starts a plan and manually shares an invitation link in the friends' existing group chat. Friends open the invite and talk privately with their own personal agent for that outing. The agents negotiate in the app, and people review and confirm the plan there. Participants do not install agents. Native iMessage or WhatsApp integration is not required.
+The first version is a web app. An initiator starts a plan and manually shares an invitation link in the friends' existing group chat. Friends open the invite and talk privately with their own personal agent for that outing. Each participant must sign in before private agent chat; an invitation link or typed name alone does not establish identity. The agents negotiate in the app, and people review and confirm the plan there. Participants do not install agents. Native iMessage or WhatsApp integration is not required.
 
 ## Response cutoff and confirmation
 
@@ -39,7 +41,7 @@ The initiator sets a response cutoff. A person who has not replied by the cutoff
 
 After the cutoff, the process reassesses the willing attendee set against every remaining person's conditions, including strict limits and attendance dependencies. A missing named person can make another participant ineligible. Earlier approvals for a larger group do not transfer to the revised plan.
 
-Final approval is separate from the response cutoff. After conditions have been gathered and a proposed attendee set is ready, each person's own agent asks them to approve the exact activity, time, estimated cost, and attendee list. The default final-approval window is 30 minutes from each user's request. If any user does not approve before expiry, the proposal is not confirmed. Silence is not approval. Expiry does not automatically remove that person or reshuffle the group, and an agent does not commit for its user.
+Final approval is separate from the response cutoff. After conditions have been gathered and a proposed attendee set is ready, each person's own agent asks them to approve the exact activity, time, estimated cost, and attendee list. The default final-approval window is 30 minutes after final approval is requested. If any user does not approve before expiry, the proposal is not confirmed. Silence is not approval. Expiry does not automatically remove that person or reshuffle the group, and an agent does not commit for its user.
 
 A person who did not respond in time may request to join after the group confirms. The request does not reopen or change the existing plan. The proposed revised group must satisfy every member's conditions, and everyone in that group, including the joiner, must explicitly confirm the revised plan. The existing plan stays intact while the proposed addition is considered.
 
@@ -48,14 +50,14 @@ A material change to the activity, time, estimated cost, or attendee list requir
 ## Open decisions
 
 - The selection method after invitations, including consensus or voting, tie handling, and the starter's role
-- How participants classify conditions as strict or flexible, and how flexible preferences are ranked or balanced fairly
+- How participants classify conditions as strict or flexible, and how different participants' private rankings are reconciled fairly
 - How the candidate catalog, shared group page, and manual options appear and are represented
 - The default response cutoff length and any reminders for that cutoff
-- Whether users can change the 30-minute final-approval window and how that setting is presented
+- Whether users can change the 30-minute final-approval window, how its timing is anchored across participants, and how that setting is presented
 - What happens if an activity is due to start while final approval is pending
-- Final-approval reminders and their delivery, late approval after expiry, restart, and the disposition of an unconfirmed proposal
+- Final-approval reminders and their delivery, late approval after expiry or restart, and the disposition of an unconfirmed proposal
 - How people submit late replies and join requests, and how reentry works
 - How to handle withdrawals or removals and changes after confirmation beyond renewed approval
-- Account, sign-in, participant identity, invite access, and privacy enforcement
+- Identity provider and sign-in method, matching an account to an invited participant, retention, invite access, and privacy enforcement
 - Notifications and agent lifetime beyond an outing
 - How multi-person coordination is implemented, whether Cubbie integration is needed, and the technical design

@@ -19,6 +19,9 @@ A signal from at least one person that they are interested in doing something. O
 **Condition**:
 A participant's preference or requirement that affects whether they will attend or which activity they will accept. Examples include availability, spending limits, activities to include or avoid, and who attends.
 
+**Option ranking**:
+A participant's private ordering of workable options, which their agent uses in negotiation. It is not approval of an option.
+
 **Hard condition**:
 A strict limit the participant requires a plan to satisfy. Only that participant may explicitly relax it.
 
