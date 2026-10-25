@@ -20,11 +20,18 @@ export type AgentErrorCode =
   | "usage_not_included"
   | "unavailable";
 
+export type AgentOutputDiagnostic = {
+  stage: "malformed_json" | "schema_validation";
+  finishReason: string;
+  issues?: Array<{ path: string; code: string }>;
+};
+
 export class AgentError extends Error {
   constructor(
     readonly code: AgentErrorCode,
     message: string = code,
     options?: ErrorOptions,
+    readonly outputDiagnostic?: AgentOutputDiagnostic,
   ) {
     super(message, options);
     this.name = "AgentError";
@@ -170,7 +177,40 @@ function findAgentError(error: unknown): AgentError | null {
   return null;
 }
 
-function normalizedJson<T>(text: string, schema: z.ZodType<T>): T {
+const SAFE_ISSUE_PATH_SEGMENTS = new Set([
+  "text", "conditionUpdate", "hard", "availableWindows", "startsAt", "endsAt",
+  "maxCostCents", "requiredActivityTags", "avoidedActivityTags", "attendanceDependencyNames",
+  "minimumGroupSize", "flexiblePreferences", "clarifyingQuestions", "optionId", "activity",
+  "estimatedCostCents", "activityTags", "attendeeUserIds", "counterOfferToId", "privateNote",
+]);
+const SAFE_ISSUE_CODES = new Set([
+  "custom", "invalid_element", "invalid_format", "invalid_key", "invalid_type",
+  "invalid_union", "invalid_value", "not_multiple_of", "too_big", "too_small",
+  "unrecognized_keys",
+]);
+const SAFE_FINISH_REASONS = new Set([
+  "stop", "length", "content-filter", "tool-calls", "error", "other", "unknown",
+]);
+
+function safeOutputIssuePath(path: PropertyKey[]): string {
+  if (path.length === 0) return "$";
+  return path.map((segment) => {
+    if (typeof segment === "string" && SAFE_ISSUE_PATH_SEGMENTS.has(segment)) return segment;
+    if (typeof segment === "number") return "[]";
+    return "?";
+  }).join(".");
+}
+
+function safeOutputIssueCode(code: string): string {
+  return SAFE_ISSUE_CODES.has(code) ? code : "other";
+}
+
+function safeFinishReason(reason: unknown): string {
+  if (typeof reason !== "string") return "unavailable";
+  return SAFE_FINISH_REASONS.has(reason) ? reason : "other";
+}
+
+function normalizedJson<T>(text: string, schema: z.ZodType<T>, finishReason?: unknown): T {
   let trimmed = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
   if (!trimmed) {
     throw new AgentError("empty_reply", "model returned no text");
@@ -186,13 +226,22 @@ function normalizedJson<T>(text: string, schema: z.ZodType<T>): T {
   } catch (error) {
     throw new AgentError("invalid_output", "model returned invalid structured output", {
       cause: error,
-    });
+    }, { stage: "malformed_json", finishReason: safeFinishReason(finishReason) });
   }
   const result = schema.safeParse(parsed);
   if (!result.success) {
     throw new AgentError(
       "invalid_output",
       JSON.stringify(result.error.issues.map((issue) => issue.path.join("."))),
+      undefined,
+      {
+        stage: "schema_validation",
+        finishReason: safeFinishReason(finishReason),
+        issues: result.error.issues.slice(0, 12).map((issue) => ({
+          path: safeOutputIssuePath(issue.path),
+          code: safeOutputIssueCode(issue.code),
+        })),
+      },
     );
   }
   return result.data;
@@ -298,7 +347,7 @@ function createAgent(options: ProviderOptions): Agent {
         maxRetries: 0,
         maxOutputTokens: 4000,
       });
-      return normalizedJson(result.text, schema);
+      return normalizedJson(result.text, schema, result.finishReason);
     } catch (error) {
       const providerError = findAgentError(error);
       if (providerError) throw providerError;
@@ -323,7 +372,7 @@ function createAgent(options: ProviderOptions): Agent {
           maxRetries: 0,
           maxOutputTokens: 4000,
         });
-        return normalizedJson(result.text, AgentReplySchema);
+        return normalizedJson(result.text, AgentReplySchema, result.finishReason);
       } catch (error) {
         const providerError = findAgentError(error);
         if (providerError) throw providerError;

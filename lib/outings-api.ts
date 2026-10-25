@@ -414,6 +414,12 @@ async function generateReply(
           and exists (select 1 from outings where id = $3 and ended_at is null)`,
       [userMessage.id, code, outing.id],
     );
+    if (code === "invalid_output") {
+      const diagnostic = error instanceof AgentError
+        ? error.outputDiagnostic ?? { stage: "unclassified_invalid_output" }
+        : { stage: "unclassified_invalid_output" };
+      console.error("[DEBUG-chat-output-20261025]", JSON.stringify(diagnostic));
+    }
     console.error("agent turn failed", code);
 
     return {
