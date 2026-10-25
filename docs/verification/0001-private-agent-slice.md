@@ -145,7 +145,8 @@ AUTH_MODE=local npm run build
 ## Unresolved blockers
 
 1. No Clerk application, Neon project, or Vercel project exists, so production sign-in,
-   managed Postgres, deployment, and the actual provider log/restore surfaces are unverified.
+   managed Postgres, deployment, and the actual provider log retention and restore history
+   are unverified.
 2. Clerk mode is compiled but not exercised. The local cookie adapter is development-only and
    throws when `NODE_ENV=production` or `VERCEL` is set.
 3. The seven-day purge job is not implemented. Purge timing relative to Neon's six-hour

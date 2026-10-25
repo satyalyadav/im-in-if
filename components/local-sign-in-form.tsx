@@ -20,7 +20,7 @@ export function LocalSignInForm() {
     });
 
     if (!response.ok) {
-      setError("Use 3–64 letters, numbers, dashes, or underscores.");
+      setError("Use 3 to 64 letters, numbers, dashes, or underscores.");
       setSubmitting(false);
       return;
     }
