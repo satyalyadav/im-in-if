@@ -189,6 +189,136 @@ describe("invitation admission and participant privacy", () => {
   });
 });
 
+describe("email preference and manual option actions", () => {
+  it("persists a verified opt-in, keeps later opt-ins from backfilling, and suppresses queued email on opt-out", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const outing = await makeOuting();
+    const request = await requestAdmission(context(GUEST), outing.inviteToken, {
+      displayName: "Guest",
+      emailOptIn: false,
+      email: null,
+    });
+    expect(request.status).toBe(200);
+    const admission = await handlePlanningAction(context(STARTER), outing.id, {
+      action: "decide_admission",
+      userId: GUEST,
+      decision: "admit",
+    });
+    expect(admission.status).toBe(200);
+
+    const saved = await handlePlanningAction(context(GUEST, ["guest@example.test"]), outing.id, {
+      action: "save_email_preferences",
+      emailOptIn: true,
+      email: "Guest@Example.test",
+    });
+    expect(saved.status).toBe(200);
+
+    const freshWorkspace = await getOutingWorkspace(context(GUEST), outing.id);
+    expect(freshWorkspace.body).toMatchObject({
+      myEmailOptIn: true,
+      myNotificationEmail: "guest@example.test",
+    });
+    const storedPreference = await db.query<{
+      email_opt_in: boolean;
+      notification_email: string | null;
+    }>(
+      `select email_opt_in, notification_email from participants where outing_id = $1 and user_id = $2`,
+      [outing.id, GUEST],
+    );
+    expect(storedPreference[0]).toEqual({ email_opt_in: true, notification_email: "guest@example.test" });
+
+    const malformed = await handlePlanningAction(context(GUEST, ["guest@example.test"]), outing.id, {
+      action: "save_email_preferences",
+      emailOptIn: true,
+      email: "not-an-email",
+    });
+    expect(malformed).toMatchObject({ status: 400, body: { error: "invalid_input" } });
+
+    const unverified = await handlePlanningAction(context(GUEST, ["owned@example.test"]), outing.id, {
+      action: "save_email_preferences",
+      emailOptIn: true,
+      email: "guest@example.test",
+    });
+    expect(unverified).toMatchObject({ status: 400, body: { error: "verified_email_required" } });
+
+    const unknownField = await handlePlanningAction(context(GUEST, ["guest@example.test"]), outing.id, {
+      action: "save_email_preferences",
+      emailOptIn: true,
+      email: "guest@example.test",
+      unexpected: true,
+    });
+    expect(unknownField).toMatchObject({ status: 400, body: { error: "invalid_input" } });
+
+    const beforeQueuedEvent = await db.query<{ count: number | string }>(
+      `select count(*)::int as count from email_outbox where outing_id = $1 and recipient_user_id = $2`,
+      [outing.id, GUEST],
+    );
+    expect(Number(beforeQueuedEvent[0].count)).toBe(0);
+
+    await db.query(
+      `insert into email_outbox
+        (id, outing_id, recipient_user_id, event_type, event_key, status, recipient_email)
+       values ($1, $2, $3, 'admission', 'test-admission', 'pending', $4)`,
+      [crypto.randomUUID(), outing.id, GUEST, "guest@example.test"],
+    );
+    const optedOut = await handlePlanningAction(context(GUEST, ["guest@example.test"]), outing.id, {
+      action: "save_email_preferences",
+      emailOptIn: false,
+      email: null,
+    });
+    expect(optedOut.status).toBe(200);
+    const optedOutWorkspace = await getOutingWorkspace(context(GUEST), outing.id);
+    expect(optedOutWorkspace.body).toMatchObject({
+      myEmailOptIn: false,
+      myNotificationEmail: null,
+    });
+    const suppressedEvent = await db.query<{ status: string; error_code: string | null }>(
+      `select status, error_code from email_outbox
+        where outing_id = $1 and recipient_user_id = $2 and event_key = 'test-admission'`,
+      [outing.id, GUEST],
+    );
+    expect(suppressedEvent[0]).toEqual({ status: "suppressed", error_code: "recipient_opted_out" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("creates a manual option through the action handler and rejects unknown action fields", async () => {
+    const outing = await makeOuting();
+    const input = {
+      action: "add_option",
+      title: "Manual late show",
+      activity: "Movie",
+      startsAt: "2026-11-02T02:00:00.000Z",
+      estimatedCostCents: 1100,
+      activityTags: ["movie"],
+    };
+    const rejected = await handlePlanningAction(context(STARTER), outing.id, {
+      ...input,
+      unexpected: true,
+    });
+    expect(rejected).toMatchObject({ status: 400, body: { error: "invalid_input" } });
+
+    const added = await handlePlanningAction(context(STARTER), outing.id, input);
+    expect(added.status).toBe(201);
+    const option = await db.query<{
+      title: string;
+      activity: string;
+      estimated_cost_cents: number;
+      source: string;
+    }>(
+      `select title, activity, estimated_cost_cents, source from outing_options
+        where outing_id = $1 and title = 'Manual late show'`,
+      [outing.id],
+    );
+    expect(option).toEqual([{
+      title: "Manual late show",
+      activity: "Movie",
+      estimated_cost_cents: 1100,
+      source: "manual",
+    }]);
+  });
+});
+
 describe("model-generated offer boundary", () => {
   it("passes only the owner's private data and rejects model output that violates hard limits", async () => {
     const outing = await makeOuting();

@@ -658,11 +658,20 @@ export async function handlePlanningAction(
   let result: ApiResponse;
   switch (action.action) {
     case "decide_admission": result = await decideAdmission(context, outing, action.userId, action.decision); break;
-    case "save_email_preferences": result = await saveEmailPreferences(context, outingId, action); break;
+    case "save_email_preferences": result = await saveEmailPreferences(context, outingId, {
+      emailOptIn: action.emailOptIn,
+      email: action.email,
+    }); break;
     case "save_private_input": result = await interpretPrivateInput(context, outing, action.privateInput); break;
     case "save_conditions": result = await saveConditions(context, outingId, action.interpretation); break;
     case "set_interest": result = await setInterest(context, outing, action.interested); break;
-    case "add_option": result = await addOption(context, outingId, action); break;
+    case "add_option": result = await addOption(context, outingId, {
+      title: action.title,
+      activity: action.activity,
+      startsAt: action.startsAt,
+      estimatedCostCents: action.estimatedCostCents,
+      activityTags: action.activityTags,
+    }); break;
     case "rank_options": result = await rankOptions(context, outingId, action.optionIds); break;
     case "generate_offer": result = await generateOffer(context, outing, agentFactory); break;
     case "publish_offer": result = await publishOffer(context, outingId, action.offerId); break;

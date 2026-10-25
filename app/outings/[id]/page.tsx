@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getCurrentUserId } from "@/lib/auth";
+import { getCurrentUserId, getVerifiedAccountEmails } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { getOutingWorkspace } from "@/lib/planning-api";
 import { OutingWorkspace, type Workspace } from "@/components/outing-workspace";
@@ -27,7 +27,11 @@ export default async function OutingPage({
     );
   }
 
-  const result = await getOutingWorkspace({ db: await getDb(), userId }, id);
+  const [db, verifiedEmails] = await Promise.all([
+    getDb(),
+    getVerifiedAccountEmails(userId),
+  ]);
+  const result = await getOutingWorkspace({ db, userId, verifiedEmails }, id);
   if (result.status !== 200) notFound();
 
   return (
