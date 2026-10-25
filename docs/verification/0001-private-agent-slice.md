@@ -14,7 +14,7 @@ Checked 2026-10-25. This record separates implemented behavior, deployed evidenc
 | Neon app-accessible restoration | Verified at zero-second history retention with no snapshots. A controlled historical restore probe was rejected. No app outing data existed during the check. |
 | App-held seven-day deletion | Exact `ended_at + 7 days` cascade deletion is implemented and proved against the deployed database with a controlled clock. Tests do not purge early. Vendor-side physical erasure is not claimed. |
 | Email | Resend sender `notify.satyalyadav.com` is verified with all four DNS records. The deployed app sent an admission notice to Resend's `delivered@resend.dev` test sink and recorded `sent`. No human recipient has opted in, so real-recipient delivery is still unverified. |
-| Scheduled maintenance | The authenticated global sweep and health endpoint work in production. A five-minute ID-free GitHub Actions workflow is in source. Activation on `main` and repository-secret wiring remain. |
+| Scheduled maintenance | The authenticated global sweep and health endpoint work in production. The five-minute ID-free GitHub Actions workflow is active on `main`, repository secrets are set, and a manual run succeeded. |
 | Full browser flow | Completed with three synthetic Clerk development users: creation, invitation, pending denial, admission, private chat, interpretation, tie answers, offers, three-person confirmation, departure, join, expiry, restart, and privacy checks. |
 
 ## Model request and limits
@@ -86,11 +86,11 @@ Evidence lives under `/tmp/im-in-if-remaining-run/`, including `e2e/privacy.json
 
 ### Scheduled maintenance
 
-The authenticated endpoint `POST /api/maintenance/sweep` ran in production and returned aggregate counts. `GET /api/maintenance/health` reported a fresh successful run with no outing identifiers. The same endpoint is ready for a repository workflow, but the workflow is not active until it is on the default branch and `SCHEDULER_URL` and `SCHEDULER_SECRET` repository secrets are set. GitHub scheduled events are best effort; request-time deadline checks remain authoritative.
+The authenticated endpoint `POST /api/maintenance/sweep` ran in production and returned aggregate counts. `GET /api/maintenance/health` reported a fresh successful run with no outing identifiers. The five-minute workflow is active on `main`; repository secrets `SCHEDULER_URL` and `SCHEDULER_SECRET` are set. Manual run 40170521273 completed successfully and returned `{"ok":true,"cutoffsProcessed":0,"proposalsExpired":0,"outingsDeleted":0}`. GitHub scheduled events are best effort; request-time deadline checks remain authoritative.
 
 ## Remaining external work and limits
 
-1. Activate the GitHub Actions workflow on `main` and set `SCHEDULER_URL` and `SCHEDULER_SECRET`. Trigger one manual run and check health afterward.
+1. Keep the GitHub Actions schedule enabled and monitor its health; scheduled events are best effort.
 2. Real email delivery needs a recipient who explicitly opts in with a verified address on their own account. The sender and provider path are verified, but sending to a person without that opt-in is not authorized.
 3. The Clerk instance is development-only. A production launch needs a Clerk production instance and a review of session-cookie behavior, domain settings, and user limits.
 4. The free-use term for the current DeepSeek Go route ends 2026-10-31. Recheck terms before a later demo. Never enable Extra Usage or switch providers without an explicit user decision.
