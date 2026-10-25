@@ -13,7 +13,7 @@ Checked 2026-10-25. This record separates implemented behavior, deployed evidenc
 | Production app | Deployed at <https://im-in-if.vercel.app> (Vercel project `prj_zjyTygz8z1k7UkbQdy1lb32v42Xw`). Production uses Clerk, Neon, and the production secrets. |
 | Neon app-accessible restoration | Verified at zero-second history retention with no snapshots. A controlled historical restore probe was rejected. No app outing data existed during the check. |
 | App-held seven-day deletion | Exact `ended_at + 7 days` cascade deletion is implemented and proved against the deployed database with a controlled clock. Tests do not purge early. Vendor-side physical erasure is not claimed. |
-| Email | Resend sender `notify.satyalyadav.com` is verified with all four DNS records. The deployed app sent an admission notice to Resend's `delivered@resend.dev` test sink and recorded `sent`. No human recipient has opted in, so real-recipient delivery is still unverified. |
+| Email | Opt-in persistence and one real-recipient admission notice are verified in production. The recipient found the message in Spam and its return link opened the expected outing; broader inbox placement and deliverability are not established. See [production email evidence](#production-email-evidence). |
 | Scheduled maintenance | The authenticated global sweep and health endpoint work in production. The five-minute ID-free GitHub Actions workflow is active on `main`, repository secrets are set, and a manual run succeeded. |
 | Full browser flow | Completed with three synthetic Clerk development users: creation, invitation, pending denial, admission, private chat, interpretation, tie answers, offers, three-person confirmation, departure, join, expiry, restart, and privacy checks. |
 
@@ -80,9 +80,23 @@ All checks used the production deployment and production Neon database, with syn
 - Expired a proposal by controlled database clock, ran the sweep without a client action, verified the proposal expired and left the roster unchanged, restarted it as an admitted participant, and confirmed revision 2 with fresh approvals from both attendees.
 - Verified direct-request denials: pending invitee 404, signed-in stranger 404, non-starter admission 404, pending participant planning 404, and anonymous request 401. A participant's workspace did not contain another participant's private input.
 - Verified deletion with a controlled clock: ended an outing, moved `ended_at` eight days into the past, ran the sweep, and found zero rows for the outing and all thirteen cascading tables. The same signed-in account still loaded and the deleted outing returned 404.
-- Verified the email sender by asking the app to send an admission notice to Resend's `delivered@resend.dev` test sink. The outbox recorded `sent`; no human address received mail and no synthetic Clerk user was opted in.
+- Earlier synthetic email check: asked the app to send an admission notice to Resend's `delivered@resend.dev` test sink. The outbox recorded `sent`; at that time no human address received mail and no synthetic Clerk user was opted in.
 
 Evidence lives under `/tmp/im-in-if-remaining-run/`, including `e2e/privacy.json`, `e2e/expiry.json`, `e2e/deletion.json`, `e2e/email-sink.json`, and `logs/`.
+
+### Production email evidence
+
+On 2026-10-25, the user signed in through Google with their own verified Gmail account and enabled email opt-in. The first save returned `400 invalid_input`. Strict validation of nested payloads and server-rendered initialization of verified emails were fixed in commit `25d97e7`. Production deployment `dpl_2V3sLWiFViGxweJKJ7zKHX6Kqf66` is READY and includes those fixes. Production checks returned 200 when saving opt-in and `true` on a fresh GET. The checkbox remained checked after reload, which the user confirmed.
+
+For a separate test, an opted-out synthetic account was used as an invitee. Its admission request returned 200 pending, with zero sends to that account in the synthetic test. The request queued an admission notice to the real opted-in account. The user found the email in Gmail Spam, followed its app return link to the correct outing, and admitted the original demo guest. The new synthetic guest remains pending. Delivery and link behavior are verified for this one recipient; primary-inbox placement and broader deliverability are not. The message contains a generic event notice and app return link, with no planning details.
+
+The app deletes its own outing and email records seven days after `ended_at`; this does not control provider copies. As of this check, Resend's [security page](https://resend.com/security) says email and log data is retained for 30 days on Free, Pro, and Scale plans. Vendor-side physical erasure is not claimed. Public Google DNS checks at 17:10 UTC found the DKIM TXT record at `resend._domainkey.notify.satyalyadav.com` and returned NXDOMAIN for both `_dmarc.notify.satyalyadav.com` and `_dmarc.satyalyadav.com`. Missing DMARC is a possible deliverability gap, not a proven cause of the Spam placement. No DNS changes were made.
+
+### Conversation transport verification
+
+Commit `9b3977f6947164b0f44bee9ec12797e2339366c1` is in production deployment `dpl_CkAeKZC345tiqwdWR8J9hP79P3Fh` (`READY`). A live Chrome test with a synthetic owner verified: `$15` saved; an ambiguous increase asked for an amount and retained `$15`; `20 bucks.` prompted the server's exact-consent question while retaining `$15`; `Yes.` saved `$20`; `Thanks.` left `$20` unchanged; and `lower my hard spending cap to $12` saved `$12`. After reload, GET retained `1200` with `ready=true`. The UI showed `Ask agent for an offer` and no `Ask DeepSeek` or structured conditions editor. Typed tool calls through the real Go model succeeded.
+
+The full server suite passed 65 tests across 8 files before the final transport change. After that change, the provider suite passed 14 tests, typecheck and diff check passed, and the remote production build reached READY. The 65-test result was not rerun on the final transport. The two-account privacy rerun and full walkthrough were also not repeated after transport; those earlier checks remain historical, and the user will run the walkthrough for the demo.
 
 ### Scheduled maintenance
 
@@ -91,7 +105,7 @@ The authenticated endpoint `POST /api/maintenance/sweep` ran in production and r
 ## Remaining external work and limits
 
 1. Keep the GitHub Actions schedule enabled and monitor its health; scheduled events are best effort.
-2. Real email delivery needs a recipient who explicitly opts in with a verified address on their own account. The sender and provider path are verified, but sending to a person without that opt-in is not authorized.
+2. Broader email deliverability remains unverified. One opted-in recipient received the admission notice in Spam; see [production email evidence](#production-email-evidence) for observed DNS records.
 3. The Clerk instance is development-only. A production launch needs a Clerk production instance and a review of session-cookie behavior, domain settings, and user limits.
 4. The free-use term for the current DeepSeek Go route ends 2026-10-31. Recheck terms before a later demo. Never enable Extra Usage or switch providers without an explicit user decision.
 5. The app uses the free Vercel/Neon/Clerk/Resend tiers. Current quotas are sufficient for this demo but are not a capacity guarantee.
