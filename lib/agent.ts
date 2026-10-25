@@ -40,15 +40,36 @@ export type AgentOutingContext = {
 export type AgentTurnInput = {
   outing: AgentOutingContext;
   history: Array<{ role: "user" | "agent"; content: string }>;
+  currentConditions: ConditionInterpretation | null;
+  conditionsReady: boolean;
+  conditionsLocked: boolean;
+  participants: PublicParticipant[];
   sessionId?: string;
 };
 
-export type ConditionInterpretationInput = {
-  outing: AgentOutingContext;
-  sessionId?: string;
-  privateInput: string;
-  participantUserId: string;
-  participants: PublicParticipant[];
+const AgentConditionUpdateSchema = z.object({
+  hard: z.object({
+    availableWindows: ConditionInterpretationSchema.shape.hard.shape.availableWindows,
+    maxCostCents: ConditionInterpretationSchema.shape.hard.shape.maxCostCents,
+    requiredActivityTags: ConditionInterpretationSchema.shape.hard.shape.requiredActivityTags,
+    avoidedActivityTags: ConditionInterpretationSchema.shape.hard.shape.avoidedActivityTags,
+    attendanceDependencyNames: z.array(z.string().trim().min(1).max(128)).max(20),
+    minimumGroupSize: ConditionInterpretationSchema.shape.hard.shape.minimumGroupSize,
+  }).strict(),
+  flexiblePreferences: ConditionInterpretationSchema.shape.flexiblePreferences,
+  clarifyingQuestions: ConditionInterpretationSchema.shape.clarifyingQuestions,
+}).strict();
+
+export type AgentConditionUpdate = z.infer<typeof AgentConditionUpdateSchema>;
+
+const AgentReplySchema = z.object({
+  text: z.string().trim().min(1).max(12_000),
+  conditionUpdate: AgentConditionUpdateSchema.nullable(),
+}).strict();
+
+export type AgentReply = {
+  text: string;
+  conditionUpdate?: AgentConditionUpdate | null;
 };
 
 export type OfferGenerationInput = {
@@ -70,10 +91,7 @@ export type OfferGenerationInput = {
 };
 
 export interface Agent {
-  reply(input: AgentTurnInput): Promise<{ text: string }>;
-  interpretConditions?(
-    input: ConditionInterpretationInput,
-  ): Promise<ConditionInterpretation>;
+  reply(input: AgentTurnInput): Promise<AgentReply>;
   generateOffer?(input: OfferGenerationInput): Promise<OfferCandidate>;
 }
 
@@ -86,7 +104,6 @@ export type OpenCodeGoAgentConfig = {
 
 export const ACTIVE_GO_MODEL = "deepseek-v4.1-flash";
 
-const InterpretationSchema = ConditionInterpretationSchema;
 const OfferSchema = OfferCandidateSchema;
 
 function systemPrompt(input: AgentTurnInput): string {
@@ -99,10 +116,40 @@ function systemPrompt(input: AgentTurnInput): string {
     "You are one participant's private personal agent for one outing.",
     `The outing's initial suggestion: ${JSON.stringify(input.outing.suggestion)}`,
     `Response cutoff: ${cutoff}.`,
-    "Help your owner think through their own conditions and next steps.",
-    "Do not claim anyone else agreed. Do not commit for your owner.",
-    "Keep replies concise and plain. Use plain text without Markdown headings or asterisks.",
+    "Gather and maintain only your owner's conditions in this private conversation.",
+    "Use only the owner's messages, the current condition state below, and the admitted public roster below.",
+    "Return exactly one JSON object with keys text and conditionUpdate. text is a concise plain-language reply. conditionUpdate is null when this message adds or corrects no condition; otherwise include the complete updated condition state.",
+    "The conditionUpdate object has hard.availableWindows (start and end ISO timestamps), hard.maxCostCents (integer or null), hard.requiredActivityTags, hard.avoidedActivityTags, hard.attendanceDependencyNames (exact admitted display names), hard.minimumGroupSize, flexiblePreferences, and clarifyingQuestions.",
+    "Preserve every saved hard condition across turns. Never weaken or remove one unless the owner explicitly asks for that change. A generic thanks, off-topic message, or answer that does not resolve the question must not change conditions or count as confirmation.",
+    "Treat only limits the owner states as required as hard. Put ordinary likes and tradeoffs in flexiblePreferences.",
+    "Ask one focused question when the amount, date, time, strictness, or person is unclear. Do not guess missing dates or time zones. Use the outing time zone for relative times. Keep unresolved questions in clarifyingQuestions and leave the related condition unchanged.",
+    "For attendance dependencies, use exact admitted display names from the roster. Ask who the owner means when a name is unknown or ambiguous. Never use the owner's own name as an attendance dependency.",
+    "A condition update is not interest, attendance, agreement, or approval. Never claim anyone agreed or commit for your owner.",
+    `Current condition state, with attendance dependencies shown as names: ${JSON.stringify(promptConditions(input))}`,
+    `Current conditions are ${input.conditionsReady ? "ready" : "not yet ready"}.`,
+    `The owner has ${input.conditionsLocked ? "confirmed a plan, so conditions are locked" : "not confirmed a plan with locked conditions"}.`,
+    `Admitted people: ${JSON.stringify(input.participants.map((participant) => participant.displayName))}`,
+    "Keep replies concise and plain. Use no Markdown headings or asterisks.",
   ].join("\n");
+}
+
+function promptConditions(input: AgentTurnInput): unknown {
+  if (!input.currentConditions) return null;
+  const names = new Map(input.participants.map((person) => [person.userId, person.displayName]));
+  return {
+    hard: {
+      availableWindows: input.currentConditions.hard.availableWindows,
+      maxCostCents: input.currentConditions.hard.maxCostCents,
+      requiredActivityTags: input.currentConditions.hard.requiredActivityTags,
+      avoidedActivityTags: input.currentConditions.hard.avoidedActivityTags,
+      attendanceDependencyNames: input.currentConditions.hard.attendanceDependencies.map(
+        (userId) => names.get(userId) ?? "unknown admitted person",
+      ),
+      minimumGroupSize: input.currentConditions.hard.minimumGroupSize,
+    },
+    flexiblePreferences: input.currentConditions.flexiblePreferences,
+    clarifyingQuestions: input.currentConditions.clarifyingQuestions,
+  };
 }
 
 function isAbort(error: unknown): boolean {
@@ -274,11 +321,9 @@ function createAgent(options: ProviderOptions): Agent {
           })),
           abortSignal: timeout(),
           maxRetries: 0,
+          maxOutputTokens: 4000,
         });
-
-        const text = result.text.trim();
-        if (!text) throw new AgentError("empty_reply");
-        return { text };
+        return normalizedJson(result.text, AgentReplySchema);
       } catch (error) {
         const providerError = findAgentError(error);
         if (providerError) throw providerError;
@@ -287,20 +332,6 @@ function createAgent(options: ProviderOptions): Agent {
         }
         throw new AgentError("model_error", "model request failed", { cause: error });
       }
-    },
-
-    async interpretConditions(input) {
-      const prompt = [
-        "Interpret only this participant's private planning input.",
-        "Return one JSON object with exactly these fields: hard.availableWindows (start/end ISO timestamps), hard.maxCostCents (integer or null), hard.requiredActivityTags, hard.avoidedActivityTags, hard.attendanceDependencies (participant user IDs), hard.minimumGroupSize, flexiblePreferences, clarifyingQuestions.",
-        "Treat a strict limit as hard only when the owner states it clearly. Put allowed tradeoffs in flexiblePreferences.",
-        "Ask a short question for unclear amounts, times, strictness, or identity. Leave uncertain fields empty or null. Never infer attendance.",
-        `Outing suggestion: ${JSON.stringify(input.outing.suggestion)}`,
-        `Admitted people and their names: ${JSON.stringify(input.participants)}`,
-        `Current participant ID: ${JSON.stringify(input.participantUserId)}`,
-        `Private input: ${JSON.stringify(input.privateInput)}`,
-      ].join("\n");
-      return generateStructured(input.sessionId, InterpretationSchema, prompt);
     },
 
     async generateOffer(input) {

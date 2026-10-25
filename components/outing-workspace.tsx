@@ -5,7 +5,6 @@ import { formatZonedDateTime } from "@/lib/cutoff";
 import { OutingChat } from "@/components/outing-chat";
 import type { MessageView, OutingView } from "@/lib/outings-api";
 import {
-  emptyConditionInterpretation,
   type CatalogOption,
   type ConditionInterpretation,
   type PublicOffer,
@@ -45,7 +44,6 @@ export type Workspace = {
   participants: PublicParticipant[];
   pendingAdmissions: Array<{ userId: string; displayName: string; requestedAt: string }>;
   options: CatalogOption[];
-  myPrivateInput: string;
   myConditions: ConditionInterpretation | null;
   myConditionsReady: boolean;
   myRankings: string[];
@@ -88,10 +86,10 @@ type Action = Record<string, unknown> & { action: string };
 type ActionRunner = (action: Action) => Promise<boolean>;
 
 const ERROR_COPY: Record<string, string> = {
-  agent_unavailable: "The DeepSeek Go agent is not configured for this deployment.",
+  agent_unavailable: "Your agent is not available on this deployment.",
   usage_not_included: "The provider did not confirm zero-cost Go usage. No response was accepted.",
-  clarification_required: "Answer or resolve the private question before saving these conditions.",
-  conditions_need_review: "Review and save your conditions before responding.",
+  clarification_required: "Answer the follow-up in your private chat before continuing.",
+  conditions_need_review: "Tell your agent what would make this outing work before responding.",
   confirmed_conditions_locked: "Conditions are locked for the confirmed plan. Request to leave if it no longer works for you.",
   response_cutoff_passed: "The response cutoff has passed.",
   offer_not_feasible: "That offer conflicts with one or more strict conditions.",
@@ -123,10 +121,6 @@ function tagsFromText(value: string): string[] {
   return [...new Set(value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))];
 }
 
-function linesFromText(value: string): string[] {
-  return value.split("\n").map((item) => item.trim()).filter(Boolean);
-}
-
 function errorText(code: string): string {
   return ERROR_COPY[code] ?? "That change could not be saved. Review it and try again.";
 }
@@ -146,204 +140,6 @@ function PlannerButton({
     <button className="button button-solid planner-button" type={type} disabled={disabled} onClick={onClick}>
       {children}
     </button>
-  );
-}
-
-function ConditionsEditor({
-  workspace,
-  busy,
-  act,
-}: {
-  workspace: Workspace;
-  busy: boolean;
-  act: ActionRunner;
-}) {
-  const [privateInput, setPrivateInput] = useState(workspace.myPrivateInput);
-  const [draft, setDraft] = useState<ConditionInterpretation>(
-    workspace.myConditions ?? emptyConditionInterpretation(),
-  );
-  const [maxCost, setMaxCost] = useState(
-    workspace.myConditions?.hard.maxCostCents === null || !workspace.myConditions
-      ? ""
-      : (workspace.myConditions.hard.maxCostCents / 100).toFixed(2),
-  );
-  const [conditionError, setConditionError] = useState<string | null>(null);
-
-  const conditionKey = JSON.stringify(workspace.myConditions);
-  useEffect(() => {
-    const next = workspace.myConditions ?? emptyConditionInterpretation();
-    setDraft(next);
-    setPrivateInput(workspace.myPrivateInput);
-    setMaxCost(next.hard.maxCostCents === null ? "" : (next.hard.maxCostCents / 100).toFixed(2));
-  }, [conditionKey, workspace.myPrivateInput]);
-
-  function updateHard<K extends keyof ConditionInterpretation["hard"]>(
-    key: K,
-    value: ConditionInterpretation["hard"][K],
-  ) {
-    setDraft((current) => ({ ...current, hard: { ...current.hard, [key]: value } }));
-  }
-
-  function save() {
-    setConditionError(null);
-    const cents = maxCost.trim() === "" ? null : Math.round(Number(maxCost) * 100);
-    if (maxCost.trim() && (cents === null || !Number.isFinite(cents) || cents < 0 || cents > 100_000)) {
-      setConditionError("Enter a spending limit between $0 and $1,000.");
-      return;
-    }
-    if (draft.hard.availableWindows.some((window) =>
-      !Number.isFinite(new Date(window.startsAt).getTime()) ||
-      !Number.isFinite(new Date(window.endsAt).getTime()) ||
-      new Date(window.startsAt) >= new Date(window.endsAt),
-    )) {
-      setConditionError("Each time window needs valid start and end timestamps, and the end must be later.");
-      return;
-    }
-    void act({
-      action: "save_conditions",
-      interpretation: {
-        ...draft,
-        hard: { ...draft.hard, maxCostCents: Number.isFinite(cents) ? cents : null },
-      },
-    });
-  }
-
-  function updateWindow(index: number, field: "startsAt" | "endsAt", value: string) {
-    const windows = [...draft.hard.availableWindows];
-    windows[index] = { ...windows[index], [field]: value };
-    updateHard("availableWindows", windows);
-  }
-
-  return (
-    <section className="planner-card" aria-labelledby="conditions-title">
-      <p className="playbill-kicker">Private to you</p>
-      <h2 id="conditions-title">Your conditions</h2>
-      <p className="planner-help">
-        Your private notes and limits stay with your account. The model sees only your inputs and shared plan information.
-      </p>
-      <label className="planner-label" htmlFor="private-planning-input">What should your agent know?</label>
-      <textarea
-        id="private-planning-input"
-        className="planner-textarea"
-        value={privateInput}
-        onChange={(event) => setPrivateInput(event.target.value)}
-        maxLength={4000}
-        rows={4}
-        placeholder="For example: I need to be home by 9, and I can spend up to $20."
-      />
-      <div className="planner-actions">
-        <PlannerButton
-          disabled={busy || privateInput.trim().length === 0}
-          onClick={() => void act({ action: "save_private_input", privateInput })}
-        >
-          Ask DeepSeek to interpret
-        </PlannerButton>
-      </div>
-
-      {draft.clarifyingQuestions.length > 0 ? (
-        <div className="clarification-box" role="status">
-          <strong>Needs your review</strong>
-          <ul>{draft.clarifyingQuestions.map((question, index) => <li key={`${index}-${question}`}>{question}</li>)}</ul>
-        </div>
-      ) : null}
-
-      <div className="condition-fields">
-        <div className="field">
-          <label htmlFor="condition-max-cost">Strict spending limit</label>
-          <div className="inline-input"><span aria-hidden="true">$</span><input
-            id="condition-max-cost" type="number" min="0" max="1000" step="0.01"
-            value={maxCost} onChange={(event) => setMaxCost(event.target.value)} placeholder="No limit"
-          /></div>
-        </div>
-        <div className="field">
-          <label htmlFor="condition-min-size">Minimum group size</label>
-          <input
-            id="condition-min-size" type="number" min="1" max="20"
-            value={draft.hard.minimumGroupSize}
-            onChange={(event) => updateHard("minimumGroupSize", Math.min(20, Math.max(1, Number(event.target.value) || 1)))}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="required-tags">Required activities (one per line)</label>
-          <textarea id="required-tags" className="planner-textarea" rows={2}
-            value={draft.hard.requiredActivityTags.join("\n")}
-            onChange={(event) => updateHard("requiredActivityTags", tagsFromText(event.target.value))}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="avoided-tags">Activities to avoid (one per line)</label>
-          <textarea id="avoided-tags" className="planner-textarea" rows={2}
-            value={draft.hard.avoidedActivityTags.join("\n")}
-            onChange={(event) => updateHard("avoidedActivityTags", tagsFromText(event.target.value))}
-          />
-        </div>
-        <fieldset className="dependency-field">
-          <legend>People who must attend with you</legend>
-          {workspace.participants.filter((person) => person.userId !== workspace.viewerUserId).length === 0 ? (
-            <p className="hint">No other admitted people yet.</p>
-          ) : workspace.participants.filter((person) => person.userId !== workspace.viewerUserId).map((person) => (
-            <label key={person.userId} className="check-row">
-              <input
-                type="checkbox"
-                checked={draft.hard.attendanceDependencies.includes(person.userId)}
-                disabled={person.userId === ""}
-                onChange={(event) => updateHard(
-                  "attendanceDependencies",
-                  event.target.checked
-                    ? [...draft.hard.attendanceDependencies, person.userId]
-                    : draft.hard.attendanceDependencies.filter((id) => id !== person.userId),
-                )}
-              />
-              <span>{person.displayName}</span>
-            </label>
-          ))}
-        </fieldset>
-        <fieldset className="dependency-field">
-          <legend>Times you can attend</legend>
-          <p className="hint">Use ISO timestamps with a UTC offset, such as 2026-11-06T18:00:00-07:00.</p>
-          {draft.hard.availableWindows.map((window, index) => (
-            <div className="window-row" key={`window-${index}`}>
-              <label>
-                <span>Start</span>
-                <input value={window.startsAt} onChange={(event) => updateWindow(index, "startsAt", event.target.value)} />
-              </label>
-              <label>
-                <span>End</span>
-                <input value={window.endsAt} onChange={(event) => updateWindow(index, "endsAt", event.target.value)} />
-              </label>
-              <button className="text-button" type="button" onClick={() => updateHard(
-                "availableWindows", draft.hard.availableWindows.filter((_, rowIndex) => rowIndex !== index),
-              )}>Remove time</button>
-            </div>
-          ))}
-          {draft.hard.availableWindows.length < 12 ? (
-            <button className="text-button" type="button" onClick={() => updateHard(
-              "availableWindows", [...draft.hard.availableWindows, { startsAt: "", endsAt: "" }],
-            )}>Add a time window</button>
-          ) : null}
-        </fieldset>
-        <div className="field">
-          <label htmlFor="flexible-preferences">Flexible preferences (one per line)</label>
-          <textarea id="flexible-preferences" className="planner-textarea" rows={3}
-            value={draft.flexiblePreferences.join("\n")}
-            onChange={(event) => setDraft((current) => ({ ...current, flexiblePreferences: linesFromText(event.target.value) }))}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="clarifying-questions">Questions still to answer (one per line)</label>
-          <textarea id="clarifying-questions" className="planner-textarea" rows={2}
-            value={draft.clarifyingQuestions.join("\n")}
-            onChange={(event) => setDraft((current) => ({ ...current, clarifyingQuestions: linesFromText(event.target.value) }))}
-          />
-          <p className="hint">Clear a question after you have answered it. An agent cannot clear it for you.</p>
-        </div>
-      </div>
-      {conditionError ? <p className="form-error" role="alert">{conditionError}</p> : null}
-      <PlannerButton disabled={busy} onClick={save}>Save my structured conditions</PlannerButton>
-      <p className="condition-status" role="status">
-        {workspace.myConditionsReady ? "Conditions saved. You can choose whether to participate." : "Review and save these conditions before responding."}
-      </p>
-    </section>
   );
 }
 
@@ -441,9 +237,9 @@ function OfferPanel({ workspace, busy, act }: { workspace: Workspace; busy: bool
       <p className="planner-help">Offers are suggestions. Only you can publish your draft, and only people can approve a final proposal.</p>
       {workspace.myConditionsReady && workspace.myResponseStatus === "interested" ? (
         <PlannerButton disabled={busy || workspace.options.length === 0} onClick={() => void act({ action: "generate_offer" })}>
-          Ask DeepSeek for an offer
+          Ask agent for an offer
         </PlannerButton>
-      ) : <p className="empty-light">Save your conditions and choose “I’m interested” to draft an offer.</p>}
+      ) : <p className="empty-light">Tell your agent what would make this outing work, then choose “I’m interested” to draft an offer.</p>}
 
       {workspace.myDraftOffers.map((offer) => (
         <article className="offer-card offer-private" key={offer.id}>
@@ -716,8 +512,12 @@ export function OutingWorkspace({ initialWorkspace }: { initialWorkspace: Worksp
             <span>{latestNotification.kind.replaceAll("_", " ")}{latestNotification.actorName ? ` · ${latestNotification.actorName}` : ""}</span>
           </aside>
         ) : null}
-        <OutingChat outing={outing} initialMessages={workspace.messages} showPlaybill={false} />
-        <ConditionsEditor workspace={workspace} busy={busy} act={act} />
+        <OutingChat
+          outing={outing}
+          initialMessages={workspace.messages}
+          showPlaybill={false}
+          onConversationUpdate={refresh}
+        />
         <section className="planner-card response-card" aria-labelledby="response-title">
           <p className="playbill-kicker">Your response</p>
           <h2 id="response-title">Would you like to be considered?</h2>

@@ -58,6 +58,18 @@ function agent(baseURL: string) {
   });
 }
 
+function turnInput() {
+  return {
+    outing,
+    history: [{ role: "user" as const, content: "Synthetic private input" }],
+    currentConditions: null,
+    conditionsReady: false,
+    conditionsLocked: false,
+    participants: [{ userId: "owner-user", displayName: "Owner" }],
+    sessionId: "ses_synthetic-conversation-1",
+  };
+}
+
 const outing = {
   suggestion: "Synthetic dinner plan",
   cutoffAt: "2026-11-01T02:30:00.000Z",
@@ -73,9 +85,24 @@ afterEach(async () => {
 
 describe("OpenCode Go agent boundary", () => {
   it("pins DeepSeek, uses an honest app identity and stable session, and accepts explicit zero-cost metadata", async () => {
+    const expected = {
+      text: "Compare two synthetic times.",
+      conditionUpdate: {
+        hard: {
+          availableWindows: [],
+          maxCostCents: 1500,
+          requiredActivityTags: [],
+          avoidedActivityTags: [],
+          attendanceDependencyNames: [],
+          minimumGroupSize: 1,
+        },
+        flexiblePreferences: [],
+        clarifyingQuestions: [],
+      },
+    };
     const { baseURL, captured } = await fakeGo((_request, response) => {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(completion("Compare two synthetic times.", {
+      response.end(completion(JSON.stringify(expected), {
         prompt_tokens: 1,
         completion_tokens: 1,
         total_tokens: 2,
@@ -83,18 +110,15 @@ describe("OpenCode Go agent boundary", () => {
         cost: 0,
       }));
     });
-    const result = await agent(baseURL).reply({
-      outing,
-      history: [{ role: "user", content: "Synthetic private input" }],
-      sessionId: "ses_synthetic-conversation-1",
-    });
+    const result = await agent(baseURL).reply(turnInput());
 
-    expect(result.text).toBe("Compare two synthetic times.");
+    expect(result).toEqual(expected);
     expect(captured).toHaveLength(1);
     expect(captured[0].body.model).toBe("deepseek-v4.1-flash");
     expect(captured[0].session).toBe("ses_synthetic-conversation-1");
     expect(captured[0].userAgent).toBe("im-in-if/0.1.0");
     expect(JSON.stringify(captured[0].body)).toContain("Synthetic private input");
+    expect(JSON.stringify(captured[0].body)).toContain("conditionUpdate");
   });
 
   it.each([
@@ -110,11 +134,8 @@ describe("OpenCode Go agent boundary", () => {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(completion("Synthetic response", usage));
     });
-    await expect(agent(baseURL).reply({
-      outing,
-      history: [{ role: "user", content: "Synthetic only" }],
-      sessionId: "ses_synthetic-guard-check",
-    })).rejects.toMatchObject({ code: "usage_not_included" });
+    await expect(agent(baseURL).reply({ ...turnInput(), sessionId: "ses_synthetic-guard-check" }))
+      .rejects.toMatchObject({ code: "usage_not_included" });
   });
 
   it("rejects malformed successful response bodies", async () => {
@@ -122,10 +143,7 @@ describe("OpenCode Go agent boundary", () => {
       response.writeHead(200, { "content-type": "application/json" });
       response.end("not-json");
     });
-    await expect(agent(baseURL).reply({
-      outing,
-      history: [{ role: "user", content: "Synthetic only" }],
-      sessionId: "ses_synthetic-malformed-check",
-    })).rejects.toMatchObject({ code: "usage_not_included" } satisfies Partial<AgentError>);
+    await expect(agent(baseURL).reply({ ...turnInput(), sessionId: "ses_synthetic-malformed-check" }))
+      .rejects.toMatchObject({ code: "usage_not_included" } satisfies Partial<AgentError>);
   });
 });

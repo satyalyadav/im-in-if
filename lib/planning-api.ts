@@ -10,7 +10,6 @@ import {
   type OwnerContext,
 } from "@/lib/outings-api";
 import {
-  ConditionInterpretationSchema,
   OfferCandidateSchema,
   emptyConditionInterpretation,
   parseJsonValue,
@@ -151,8 +150,6 @@ const emailPreferenceSchema = z.object({
 const ActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("decide_admission"), userId: z.string().min(1).max(128), decision: z.enum(["admit", "reject"]) }).strict(),
   z.object({ action: z.literal("save_email_preferences"), ...emailPreferenceSchema.shape }).strict(),
-  z.object({ action: z.literal("save_private_input"), privateInput: z.string().trim().min(1).max(4000) }).strict(),
-  z.object({ action: z.literal("save_conditions"), interpretation: ConditionInterpretationSchema }).strict(),
   z.object({ action: z.literal("set_interest"), interested: z.boolean() }).strict(),
   z.object({ action: z.literal("add_option"), ...optionSchema.shape }).strict(),
   z.object({ action: z.literal("rank_options"), optionIds: z.array(z.string().uuid()).max(40) }).strict(),
@@ -442,7 +439,6 @@ export async function getOutingWorkspace(
       requestedAt: new Date(participant.created_at).toISOString(),
     })),
     options: optionsRows.map(toCatalogOption),
-    myPrivateInput: ownPreferences?.private_input ?? "",
     myConditions: interpretation,
     myConditionsReady: ownPreferences?.interpretation_ready ?? false,
     myRankings: ownPreferences
@@ -662,8 +658,6 @@ export async function handlePlanningAction(
       emailOptIn: action.emailOptIn,
       email: action.email,
     }); break;
-    case "save_private_input": result = await interpretPrivateInput(context, outing, action.privateInput); break;
-    case "save_conditions": result = await saveConditions(context, outingId, action.interpretation); break;
     case "set_interest": result = await setInterest(context, outing, action.interested); break;
     case "add_option": result = await addOption(context, outingId, {
       title: action.title,
@@ -776,146 +770,6 @@ async function saveEmailPreferences(
     },
   ]);
   return api(200, { ok: true });
-}
-
-async function interpretPrivateInput(
-  context: OwnerContext,
-  outing: LoadedOuting,
-  privateInput: string,
-): Promise<ApiResponse> {
-  const agent = getAgentSafely();
-  if (agent instanceof AgentError || !agent.interpretConditions) {
-    return api(503, { error: "agent_unavailable" });
-  }
-  const own = await context.db.query<{ agent_session_id: string }>(
-    `select agent_session_id from participants
-      where outing_id = $1 and user_id = $2 and admission_status = 'admitted'`,
-    [outing.id, context.userId],
-  );
-  if (!own[0]) return api(404, { error: "not_found" });
-  const participants = await context.db.query<{ user_id: string; display_name: string }>(
-    `select user_id, display_name from participants
-      where outing_id = $1 and admission_status = 'admitted' order by created_at`,
-    [outing.id],
-  );
-  await context.db.query(
-    `insert into participant_preferences (outing_id, user_id, private_input, interpretation, interpretation_ready, rankings, updated_at)
-     values ($1, $2, $3, null, false, '[]'::jsonb, now())
-     on conflict (outing_id, user_id) do update
-       set private_input = excluded.private_input,
-           interpretation = null, interpretation_ready = false, updated_at = now()`,
-    [outing.id, context.userId, privateInput],
-  );
-
-  try {
-    const interpreted = await agent.interpretConditions({
-      outing: {
-        suggestion: outing.suggestion,
-        cutoffAt: new Date(outing.cutoff_at).toISOString(),
-        cutoffTimeZone: outing.cutoff_time_zone,
-      },
-      sessionId: own[0].agent_session_id,
-      privateInput,
-      participantUserId: context.userId,
-      participants: participants.map((participant) => ({
-        userId: participant.user_id,
-        displayName: participant.display_name,
-      })),
-    });
-    const knownIds = new Set(participants.map((participant) => participant.user_id));
-    const unknownIds = interpreted.hard.attendanceDependencies.filter((id) => !knownIds.has(id));
-    const safeInterpretation = {
-      ...interpreted,
-      hard: {
-        ...interpreted.hard,
-        attendanceDependencies: interpreted.hard.attendanceDependencies.filter((id) => knownIds.has(id)),
-      },
-      clarifyingQuestions: unknownIds.length
-        ? [...interpreted.clarifyingQuestions, "Which admitted person did you mean?"]
-        : interpreted.clarifyingQuestions,
-    };
-    await context.db.query(
-      `update participant_preferences set interpretation = $3::jsonb, updated_at = now()
-        where outing_id = $1 and user_id = $2`,
-      [outing.id, context.userId, JSON.stringify(safeInterpretation)],
-    );
-    return api(200, { interpretation: safeInterpretation, ready: false });
-  } catch (error) {
-    const code = error instanceof AgentError ? error.code : "model_error";
-    console.error("condition interpretation failed", code);
-    return api(code === "unavailable" ? 503 : 502, { error: code });
-  }
-}
-
-async function saveConditions(
-  context: OwnerContext,
-  outingId: string,
-  interpretation: ConditionInterpretation,
-): Promise<ApiResponse> {
-  const confirmed = await latestProposal(context.db, outingId, "confirmed");
-  if (confirmed && parseJsonValue(confirmed.attendee_user_ids, [] as string[]).includes(context.userId)) {
-    return api(409, { error: "confirmed_conditions_locked" });
-  }
-  const parsed = ConditionInterpretationSchema.safeParse(interpretation);
-  if (!parsed.success) return api(400, { error: "invalid_conditions" });
-  if (parsed.data.clarifyingQuestions.length > 0) {
-    return api(409, { error: "clarification_required" });
-  }
-  if (
-    parsed.data.hard.availableWindows.some(
-      (window) => new Date(window.startsAt) >= new Date(window.endsAt),
-    )
-  ) {
-    return api(400, { error: "invalid_conditions" });
-  }
-  const members = await context.db.query<{ user_id: string }>(
-    `select user_id from participants where outing_id = $1 and admission_status = 'admitted'`,
-    [outingId],
-  );
-  const admitted = new Set(members.map((row) => row.user_id));
-  if (
-    parsed.data.hard.attendanceDependencies.some(
-      (dependency) => !admitted.has(dependency) || dependency === context.userId,
-    )
-  ) {
-    return api(400, { error: "invalid_attendance_dependency" });
-  }
-  const outingRows = await context.db.query<{ ended_at: string | Date | null }>(
-    `select ended_at from outings where id = $1`,
-    [outingId],
-  );
-  if (!outingRows[0] || outingRows[0].ended_at) return api(409, { error: "outing_ended" });
-  const written = await context.db.transaction<{ user_id: string }>([
-    {
-      text: `select id from outings where id = $1 and ended_at is null for update`,
-      params: [outingId],
-    },
-    {
-      text: `insert into participant_preferences
-        (outing_id, user_id, private_input, interpretation, interpretation_ready, conditions_version, updated_at)
-       select $1, $2, '', $3::jsonb, true, 1, now()
-        where not exists (
-          select 1 from proposals p
-           where p.outing_id = $1 and p.status = 'confirmed'
-             and p.attendee_user_ids @> jsonb_build_array($2::text)
-        )
-       on conflict (outing_id, user_id) do update
-         set interpretation = excluded.interpretation,
-             interpretation_ready = true,
-             conditions_version = participant_preferences.conditions_version + 1,
-             updated_at = now()
-         where not exists (
-           select 1 from proposals p
-            where p.outing_id = $1 and p.status = 'confirmed'
-              and p.attendee_user_ids @> jsonb_build_array($2::text)
-         )
-       returning user_id`,
-      params: [outingId, context.userId, JSON.stringify(parsed.data)],
-    },
-  ]);
-  if (!written[1]?.length) return api(409, { error: "confirmed_conditions_locked" });
-  await invalidatePublishedProposals(context.db, outingId);
-  return api(200, { ready: true });
 }
 
 async function setInterest(

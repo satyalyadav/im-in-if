@@ -12,6 +12,7 @@ const ERROR_COPY: Record<string, string> = {
   unauthorized: "Sign in again to send this message.",
   not_found: "This outing is no longer available.",
   invalid_input: "That message could not be sent.",
+  stale_reply: "Your conditions changed while the agent was replying. Continue in the latest chat turn.",
 };
 
 function timeLabel(iso: string, timeZone: string): string {
@@ -22,9 +23,10 @@ type Props = {
   outing: OutingView;
   initialMessages: MessageView[];
   showPlaybill?: boolean;
+  onConversationUpdate?: () => Promise<void> | void;
 };
 
-export function OutingChat({ outing, initialMessages, showPlaybill = true }: Props) {
+export function OutingChat({ outing, initialMessages, showPlaybill = true, onConversationUpdate }: Props) {
   const [messages, setMessages] = useState(initialMessages);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -34,6 +36,21 @@ export function OutingChat({ outing, initialMessages, showPlaybill = true }: Pro
   const [stalled, setStalled] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const idempotency = useRef<{ content: string; id: string } | null>(null);
+  const onConversationUpdateRef = useRef(onConversationUpdate);
+
+  useEffect(() => {
+    onConversationUpdateRef.current = onConversationUpdate;
+  }, [onConversationUpdate]);
+
+  useEffect(() => {
+    setMessages((current) => {
+      const localPending = current.filter((message) =>
+        message.id.startsWith("local-") &&
+        !initialMessages.some((saved) => saved.role === "user" && saved.content === message.content),
+      );
+      return [...initialMessages, ...localPending];
+    });
+  }, [initialMessages, outing.id]);
 
   const hasPendingTurn = messages.some((message) => message.status === "pending");
 
@@ -43,7 +60,9 @@ export function OutingChat({ outing, initialMessages, showPlaybill = true }: Pro
       if (!response.ok) return messages;
       const data = (await response.json()) as { messages?: MessageView[] };
       if (data.messages) {
+        const changed = JSON.stringify(data.messages) !== JSON.stringify(messages);
         setMessages(data.messages);
+        if (changed) await onConversationUpdateRef.current?.();
         return data.messages;
       }
     } catch {
@@ -121,6 +140,7 @@ export function OutingChat({ outing, initialMessages, showPlaybill = true }: Pro
       let saved = false;
       if (data?.messages) {
         setMessages(data.messages);
+        await onConversationUpdateRef.current?.();
         idempotency.current = null;
         saved = true;
       } else {
@@ -172,7 +192,10 @@ export function OutingChat({ outing, initialMessages, showPlaybill = true }: Pro
         | { messages?: MessageView[]; error?: string }
         | null;
 
-      if (data?.messages) setMessages(data.messages);
+      if (data?.messages) {
+        setMessages(data.messages);
+        await onConversationUpdateRef.current?.();
+      }
       else await refresh();
 
       if (!response.ok && response.status !== 409) {
@@ -213,7 +236,7 @@ export function OutingChat({ outing, initialMessages, showPlaybill = true }: Pro
         <div className="messages" ref={listRef} role="log" aria-live="polite">
           {messages.length === 0 ? (
             <p className="empty">
-              Start with what you know. Your agent will ask about the rest.
+              What would make this night work for you? Tell me what you know, and I'll ask about anything unclear.
             </p>
           ) : null}
 

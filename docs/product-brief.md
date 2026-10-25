@@ -22,7 +22,7 @@ Each personal agent works on one outing and has no persistent memory beyond it. 
 
 The first version should account for availability, spending limits, activities a person wants or avoids, named-person attendance dependencies, and minimum group size. Strict limits are mandatory. An agent may compromise on a flexible preference, but only its owner may explicitly relax a strict limit.
 
-If a condition's meaning or strictness is unclear, the agent asks its own user a focused question. Before negotiation, each agent shows its user a short, editable summary of its interpretation. The agent does not silently guess at strict limits.
+If a condition's meaning or strictness is unclear, the agent asks its own user a focused question in their private chat. The agent remembers the owner's conditions across turns and applies corrections there. The owner can explicitly change a hard condition; the agent never guesses at strict limits. The app keeps the interpreted state for validation without asking people to fill out structured condition fields or save a separate summary.
 
 Participants may privately rank workable options, such as preferring a 7 PM movie while also accepting dinner. Their own agent uses those choices to negotiate and explain proposals. A ranking is not approval; everyone included in a proposed plan must still explicitly confirm it.
 

@@ -1,8 +1,16 @@
 import { z } from "zod";
 import { AgentError, type Agent } from "@/lib/agent";
 import { formatZonedDateTime, resolveCutoffInstant } from "@/lib/cutoff";
+import { prepareConversationConditionUpdate } from "@/lib/conversation-conditions";
 import type { Db } from "@/lib/db";
 import { processOutingDeadlines } from "@/lib/maintenance";
+import {
+  ConditionInterpretationSchema,
+  emptyConditionInterpretation,
+  parseJsonValue,
+  type ConditionInterpretation,
+  type PublicParticipant,
+} from "@/lib/planning-types";
 
 export type OwnerContext = {
   db: Db;
@@ -185,53 +193,206 @@ async function generateReply(
   const history = await loadHistory(context.db, outing.id, context.userId, userMessage);
 
   try {
-    const sessions = await context.db.query<{ agent_session_id: string }>(
-      `select agent_session_id from participants
-        where outing_id = $1 and user_id = $2 and admission_status = 'admitted'`,
+    await context.db.query(
+      `insert into participant_preferences (outing_id, user_id)
+       values ($1, $2) on conflict (outing_id, user_id) do nothing`,
       [outing.id, context.userId],
     );
-    if (!sessions[0]) return { status: 404, body: { error: "not_found" } };
+    const [sessions, preferenceRows, participantRows, lockedRows] = await Promise.all([
+      context.db.query<{ agent_session_id: string }>(
+        `select agent_session_id from participants
+          where outing_id = $1 and user_id = $2 and admission_status = 'admitted'`,
+        [outing.id, context.userId],
+      ),
+      context.db.query<{
+        interpretation: unknown;
+        interpretation_ready: boolean;
+        conditions_version: number | string;
+      }>(
+        `select interpretation, interpretation_ready, conditions_version
+           from participant_preferences where outing_id = $1 and user_id = $2`,
+        [outing.id, context.userId],
+      ),
+      context.db.query<{ user_id: string; display_name: string }>(
+        `select user_id, display_name from participants
+          where outing_id = $1 and admission_status = 'admitted'
+          order by created_at`,
+        [outing.id],
+      ),
+      context.db.query<{ locked: boolean }>(
+        `select exists (
+           select 1 from proposals p
+            where p.outing_id = $1 and p.status = 'confirmed'
+              and p.attendee_user_ids @> jsonb_build_array($2::text)
+         ) as locked`,
+        [outing.id, context.userId],
+      ),
+    ]);
+    if (!sessions[0] || !preferenceRows[0]) return { status: 404, body: { error: "not_found" } };
+    const stored = preferenceRows[0];
+    const current = stored.interpretation
+      ? parseJsonValue(stored.interpretation, emptyConditionInterpretation())
+      : null;
+    const participants: PublicParticipant[] = participantRows.map((participant) => ({
+      userId: participant.user_id,
+      displayName: participant.display_name,
+    }));
 
-    const { text } = await context.agent.reply({
+    const agentReply = await context.agent.reply({
       outing: {
         suggestion: outing.suggestion,
         cutoffAt: iso(outing.cutoff_at),
         cutoffTimeZone: outing.cutoff_time_zone,
       },
       history,
+      currentConditions: current,
+      conditionsReady: stored.interpretation_ready,
+      conditionsLocked: lockedRows[0]?.locked ?? false,
+      participants,
       sessionId: sessions[0].agent_session_id,
     });
 
-    const written = await context.db.transaction([
-      {
-        text: `select id from outings where id = $1 and ended_at is null for update`,
-        params: [outing.id],
-      },
-      {
-        text: `insert into messages
-          (id, outing_id, owner_user_id, role, content, reply_to_message_id, status, completed_at)
-         select $1, o.id, $3, 'agent', $4, $5, 'complete', now()
-           from outings o where o.id = $2 and o.ended_at is null
-         on conflict do nothing returning id`,
-        params: [crypto.randomUUID(), outing.id, context.userId, text, userMessage.id],
-      },
-      {
-        text: `update messages set status = 'replied', error_code = null, completed_at = now()
-          where id = $1 and status in ('pending', 'failed')
-            and exists (select 1 from outings where id = $2 and ended_at is null)
-          returning id`,
-        params: [userMessage.id, outing.id],
-      },
-    ]);
-    if (!written[0]?.length) {
+    const condition = prepareConversationConditionUpdate({
+      ownerUserId: context.userId,
+      history,
+      current,
+      currentReady: stored.interpretation_ready,
+      suggested: agentReply.conditionUpdate,
+      participants,
+      conditionsLocked: lockedRows[0]?.locked ?? false,
+      timeZone: outing.cutoff_time_zone,
+      text: agentReply.text,
+    });
+    const parsedCondition = condition.interpretation
+      ? ConditionInterpretationSchema.safeParse(condition.interpretation)
+      : null;
+    if (parsedCondition && !parsedCondition.success) {
+      throw new AgentError("invalid_output", "agent returned invalid conditions");
+    }
+    const expectedVersion = Number(stored.conditions_version);
+    const saved = await context.db.query<{
+      inserted_reply_count: number | string;
+      condition_write_count: number | string;
+      marked_user_count: number | string;
+    }>(
+      `with outing_guard as materialized (
+         select id from outings where id = $1 and ended_at is null for update
+       ), message_guard as materialized (
+         select id, seq from messages
+          where id = $2 and outing_id = $1 and owner_user_id = $3 and role = 'user'
+            and status in ('pending', 'failed')
+          for update
+       ), preference_guard as materialized (
+         select pref.outing_id, pref.user_id, pref.conditions_version
+           from participant_preferences pref
+           join outing_guard o on o.id = pref.outing_id
+          where pref.user_id = $3
+          for update
+       ), condition_write as (
+         update participant_preferences pref
+            set interpretation = $8::jsonb,
+                interpretation_ready = $9,
+                conditions_version = pref.conditions_version + 1,
+                updated_at = now()
+           where pref.outing_id = $1 and pref.user_id = $3
+             and pref.conditions_version = $4 and $5::boolean
+             and exists (select 1 from preference_guard)
+             and exists (select 1 from message_guard)
+             and not exists (
+               select 1 from proposals p where p.outing_id = $1 and p.status = 'confirmed'
+                 and p.attendee_user_ids @> jsonb_build_array($3::text)
+             )
+             and not exists (
+               select 1 from messages m where m.reply_to_message_id = $2 and m.owner_user_id = $3
+             )
+           returning pref.outing_id, pref.user_id
+       ), unchanged_conditions as (
+         select pref.outing_id, pref.user_id
+           from preference_guard pref
+          where pref.conditions_version = $4 and not $5::boolean
+            and exists (select 1 from message_guard)
+            and not exists (
+              select 1 from messages m where m.reply_to_message_id = $2 and m.owner_user_id = $3
+            )
+       ), valid_turn as (
+         select outing_id, user_id from condition_write
+         union all
+         select outing_id, user_id from unchanged_conditions
+       ), inserted_reply as (
+         insert into messages
+           (id, outing_id, owner_user_id, role, content, reply_to_message_id, status, completed_at)
+         select $6, o.id, $3, 'agent', $7, $2, 'complete', now()
+           from outing_guard o where exists (select 1 from valid_turn)
+         on conflict do nothing returning id
+       ), marked_user as (
+         update messages set status = 'replied', error_code = null, completed_at = now()
+          where id = $2 and status in ('pending', 'failed')
+            and exists (select 1 from inserted_reply)
+         returning id
+       ), superseded_proposals as (
+         update proposals set status = 'superseded'
+          where outing_id = $1 and status = 'published'
+            and exists (select 1 from condition_write)
+         returning id
+       ), expired_joins as (
+         update join_requests set status = 'expired'
+          where outing_id = $1 and status = 'proposed'
+            and proposal_id in (select id from superseded_proposals)
+         returning id
+       ), expired_departures as (
+         update departure_requests set status = 'expired'
+          where outing_id = $1 and status = 'proposed'
+            and proposal_id in (select id from superseded_proposals)
+         returning id
+       )
+       select (select count(*)::int from inserted_reply) as inserted_reply_count,
+              (select count(*)::int from condition_write) as condition_write_count,
+              (select count(*)::int from marked_user) as marked_user_count,
+              (select count(*)::int from expired_joins) as expired_join_count,
+              (select count(*)::int from expired_departures) as expired_departure_count`,
+      [
+        outing.id,
+        userMessage.id,
+        context.userId,
+        expectedVersion,
+        condition.changed,
+        crypto.randomUUID(),
+        condition.text,
+        condition.changed && parsedCondition?.success
+          ? JSON.stringify(parsedCondition.data)
+          : null,
+        condition.ready,
+      ],
+    );
+    if (!saved.length) {
       return { status: 409, body: { error: "outing_ended" } };
     }
-    if (!written[1]?.length && !written[2]?.length) {
+    if (Number(saved[0].inserted_reply_count) === 0) {
       const existingReply = await context.db.query<{ id: string }>(
         `select id from messages where reply_to_message_id = $1 and owner_user_id = $2`,
         [userMessage.id, context.userId],
       );
-      if (!existingReply.length) return { status: 409, body: { error: "turn_not_saved" } };
+      if (existingReply.length) {
+        return {
+          status: successStatus,
+          body: {
+            messageId: userMessage.id,
+            messages: await listOwnMessages(context.db, outing.id, context.userId),
+          },
+        };
+      }
+      await context.db.query(
+        `update messages set status = 'failed', error_code = 'stale_reply'
+          where id = $1 and status in ('pending', 'failed')
+            and exists (select 1 from outings where id = $2 and ended_at is null)`,
+        [userMessage.id, outing.id],
+      );
+      const active = await context.db.query<{ ended_at: string | Date | null }>(
+        `select ended_at from outings where id = $1`, [outing.id],
+      );
+      return active[0]?.ended_at
+        ? { status: 409, body: { error: "outing_ended" } }
+        : { status: 409, body: { messageId: userMessage.id, error: "stale_reply" } };
     }
 
     return {
@@ -242,7 +403,11 @@ async function generateReply(
       },
     };
   } catch (error) {
-    const code = error instanceof AgentError ? error.code : "model_error";
+    const code = error instanceof AgentError
+      ? error.code
+      : error instanceof Error && error.message === "invalid_condition_update"
+        ? "invalid_output"
+        : "model_error";
     await context.db.query(
       `update messages set status = 'failed', error_code = $2
         where id = $1 and status = 'pending'

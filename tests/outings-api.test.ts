@@ -1,7 +1,14 @@
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentError, type Agent, type AgentTurnInput } from "@/lib/agent";
+import {
+  AgentError,
+  type Agent,
+  type AgentConditionUpdate,
+  type AgentReply,
+  type AgentTurnInput,
+} from "@/lib/agent";
 import { createPgliteDb, migrate, type Db } from "@/lib/db";
+import { emptyConditionInterpretation, parseJsonValue } from "@/lib/planning-types";
 import {
   createOuting,
   getOuting,
@@ -14,14 +21,39 @@ class FakeAgent implements Agent {
   calls: AgentTurnInput[] = [];
 
   constructor(
-    private readonly behavior: (input: AgentTurnInput) => string | Promise<string> = () =>
+    private readonly behavior: (input: AgentTurnInput) => string | AgentReply | Promise<string | AgentReply> = () =>
       "Here is a workable first step.",
   ) {}
 
-  async reply(input: AgentTurnInput): Promise<{ text: string }> {
+  async reply(input: AgentTurnInput): Promise<AgentReply> {
     this.calls.push(structuredClone(input));
-    return { text: await this.behavior(input) };
+    const result = await this.behavior(input);
+    return typeof result === "string" ? { text: result } : result;
   }
+}
+
+function agentConditions(options: {
+  maxCostCents?: number | null;
+  availableWindows?: AgentConditionUpdate["hard"]["availableWindows"];
+  requiredActivityTags?: string[];
+  avoidedActivityTags?: string[];
+  attendanceDependencyNames?: string[];
+  minimumGroupSize?: number;
+  flexiblePreferences?: string[];
+  clarifyingQuestions?: string[];
+} = {}): AgentConditionUpdate {
+  return {
+    hard: {
+      availableWindows: options.availableWindows ?? [],
+      maxCostCents: options.maxCostCents ?? null,
+      requiredActivityTags: options.requiredActivityTags ?? [],
+      avoidedActivityTags: options.avoidedActivityTags ?? [],
+      attendanceDependencyNames: options.attendanceDependencyNames ?? [],
+      minimumGroupSize: options.minimumGroupSize ?? 1,
+    },
+    flexiblePreferences: options.flexiblePreferences ?? [],
+    clarifyingQuestions: options.clarifyingQuestions ?? [],
+  };
 }
 
 const STARTER = "user_starter";
@@ -151,6 +183,41 @@ describe("private chat ownership", () => {
 
     await expect(savedMessages(outingId)).resolves.toHaveLength(0);
   });
+
+  it("keeps another participant's private state out of the owner's model context", async () => {
+    const agent = new FakeAgent();
+    const outingId = await makeOuting(agent);
+    const otherConditions = emptyConditionInterpretation();
+    otherConditions.hard.maxCostCents = 300;
+    await db.query(
+      `insert into participants
+        (outing_id, user_id, display_name, admission_status, response_status, agent_session_id)
+       values ($1, $2, 'Other', 'admitted', 'pending', 'ses_other-private-context')`,
+      [outingId, OTHER],
+    );
+    await db.query(
+      `insert into participant_preferences
+        (outing_id, user_id, private_input, interpretation, interpretation_ready)
+       values ($1, $2, 'SECRET-OTHER-NOTE', $3::jsonb, true)`,
+      [outingId, OTHER, JSON.stringify(otherConditions)],
+    );
+    await db.query(
+      `insert into messages (id, outing_id, owner_user_id, role, content, status)
+       values ($1, $2, $3, 'user', 'SECRET-OTHER-CHAT', 'replied')`,
+      [crypto.randomUUID(), outingId, OTHER],
+    );
+
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I want to keep it cheap.",
+    });
+
+    const payload = JSON.stringify(agent.calls[0]);
+    expect(payload).toContain("Other");
+    expect(payload).not.toContain("SECRET-OTHER-NOTE");
+    expect(payload).not.toContain("SECRET-OTHER-CHAT");
+    expect(payload).not.toContain('"maxCostCents":300');
+  });
 });
 
 describe("private agent turns", () => {
@@ -191,6 +258,487 @@ describe("private agent turns", () => {
     expect(payload).not.toContain("SECRET-OTHER-OUTING");
   });
 
+  it("stores initial facts, asks about ambiguity, then saves the answer as ready conditions", async () => {
+    const agent = new FakeAgent((input) => input.history.at(-1)?.content?.startsWith("I can spend")
+      ? {
+          text: "I have your $15 cap. Which Friday and time should I use?",
+          conditionUpdate: agentConditions({
+            maxCostCents: 1500,
+            clarifyingQuestions: ["Which Friday and time should I use?"],
+          }),
+        }
+      : {
+          text: "Got it. Friday, November 6 from 6 to 8 PM works with your $15 cap.",
+          conditionUpdate: agentConditions({
+            maxCostCents: 1500,
+            availableWindows: [{
+              startsAt: "2026-11-07T01:00:00.000Z",
+              endsAt: "2026-11-07T03:00:00.000Z",
+            }],
+          }),
+        });
+    const outingId = await makeOuting(agent);
+
+    const first = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I can spend up to $15, maybe Friday.",
+    });
+    expect(first.status).toBe(200);
+    let preference = await db.query<{
+      interpretation: unknown;
+      interpretation_ready: boolean;
+      conditions_version: number;
+    }>(`select interpretation, interpretation_ready, conditions_version
+          from participant_preferences where outing_id = $1 and user_id = $2`, [outingId, STARTER]);
+    let interpretation = parseJsonValue(preference[0].interpretation, emptyConditionInterpretation());
+    expect(interpretation.hard.maxCostCents).toBe(1500);
+    expect(interpretation.clarifyingQuestions).toEqual(["Which Friday and time should I use?"]);
+    expect(preference[0]).toMatchObject({ interpretation_ready: false, conditions_version: 1 });
+
+    const second = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Friday, November 6, between 6 and 8 PM in Phoenix.",
+    });
+    expect(second.status).toBe(200);
+    expect(agent.calls[1].currentConditions?.hard.maxCostCents).toBe(1500);
+    preference = await db.query(
+      `select interpretation, interpretation_ready, conditions_version
+         from participant_preferences where outing_id = $1 and user_id = $2`,
+      [outingId, STARTER],
+    );
+    interpretation = parseJsonValue(preference[0].interpretation, emptyConditionInterpretation());
+    expect(interpretation.hard.maxCostCents).toBe(1500);
+    expect(interpretation.hard.availableWindows).toEqual([{
+      startsAt: "2026-11-07T01:00:00.000Z",
+      endsAt: "2026-11-07T03:00:00.000Z",
+    }]);
+    expect(interpretation.clarifyingQuestions).toEqual([]);
+    expect(preference[0]).toMatchObject({ interpretation_ready: true, conditions_version: 2 });
+  });
+
+  it("accepts short amount answers to a pending clarification but ignores thanks and off-topic chat", async () => {
+    const agent = new FakeAgent((input) => {
+      const latest = input.history.at(-1)?.content;
+      if (latest === "I am still figuring out my spending limit.") {
+        return {
+          text: "How much is your maximum spending cap?",
+          conditionUpdate: agentConditions({ clarifyingQuestions: ["How much is your maximum spending cap?"] }),
+        };
+      }
+      if (latest === "Thanks.") {
+        return { text: "You're welcome.", conditionUpdate: agentConditions({ maxCostCents: 2000 }) };
+      }
+      return { text: "I'll use $20 as your cap.", conditionUpdate: agentConditions({ maxCostCents: 2000 }) };
+    });
+    const outingId = await makeOuting(agent);
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I am still figuring out my spending limit.",
+    });
+
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Thanks.",
+    });
+    let preference = await db.query<{ interpretation: unknown; conditions_version: number; interpretation_ready: boolean }>(
+      `select interpretation, interpretation_ready, conditions_version from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    expect(parseJsonValue(preference[0].interpretation, emptyConditionInterpretation()).hard.maxCostCents).toBeNull();
+    expect(preference[0].conditions_version).toBe(1);
+
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I saw a documentary about birds last night.",
+    });
+    preference = await db.query(
+      `select interpretation, conditions_version from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    expect(parseJsonValue(preference[0].interpretation, emptyConditionInterpretation()).hard.maxCostCents).toBeNull();
+    expect(preference[0].conditions_version).toBe(1);
+
+    const answered = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "20 bucks",
+    });
+    expect(answered.status).toBe(200);
+    preference = await db.query(
+      `select interpretation, conditions_version from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    expect(parseJsonValue(preference[0].interpretation, emptyConditionInterpretation()).hard.maxCostCents).toBe(2000);
+    expect(preference[0].conditions_version).toBe(2);
+
+    const bareNumberOutingId = await makeOuting(agent);
+    await sendMessage(ctx(agent), bareNumberOutingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I am still figuring out my spending limit.",
+    });
+    await sendMessage(ctx(agent), bareNumberOutingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "20",
+    });
+    preference = await db.query(
+      `select interpretation, conditions_version from participant_preferences
+        where outing_id = $1 and user_id = $2`, [bareNumberOutingId, STARTER],
+    );
+    expect(parseJsonValue(preference[0].interpretation, emptyConditionInterpretation()).hard.maxCostCents).toBe(2000);
+    expect(preference[0].conditions_version).toBe(2);
+  });
+
+  it("accepts an admitted person's bare name as the answer to a pending clarification", async () => {
+    const agent = new FakeAgent((input) => input.history.at(-1)?.content === "I need Jordan to come."
+      ? {
+          text: "I couldn't match Jordan to an admitted person. Who did you mean?",
+          conditionUpdate: agentConditions({ attendanceDependencyNames: ["Jordan"] }),
+        }
+      : {
+          text: "Got it, Jordan needs to attend with you.",
+          conditionUpdate: agentConditions({ attendanceDependencyNames: ["Jordan"] }),
+        });
+    const outingId = await makeOuting(agent);
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I need Jordan to come.",
+    });
+    const stillUnknown = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Jordan",
+    });
+    expect((stillUnknown.body.messages as Array<{ content: string }>).at(-1)?.content)
+      .toContain("I couldn't match Jordan to an admitted person");
+    let preference = await db.query<{ interpretation: unknown; interpretation_ready: boolean }>(
+      `select interpretation, interpretation_ready from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    let interpretation = parseJsonValue(preference[0].interpretation, emptyConditionInterpretation());
+    expect(interpretation.hard.attendanceDependencies).toEqual([]);
+    expect(preference[0].interpretation_ready).toBe(false);
+
+    await db.query(
+      `insert into participants
+        (outing_id, user_id, display_name, admission_status, response_status, agent_session_id)
+       values ($1, 'user_jordan', 'Jordan', 'admitted', 'pending', 'ses_jordan-followup')`,
+      [outingId],
+    );
+
+    const answered = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Jordan",
+    });
+    expect(answered.status).toBe(200);
+    preference = await db.query(
+      `select interpretation, interpretation_ready from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    interpretation = parseJsonValue(preference[0].interpretation, emptyConditionInterpretation());
+    expect(interpretation.hard.attendanceDependencies).toEqual(["user_jordan"]);
+    expect(interpretation.clarifyingQuestions).toEqual([]);
+    expect(preference[0].interpretation_ready).toBe(true);
+  });
+
+  it("keeps an existing cap through an unknown-name clarification and later resolution", async () => {
+    const agent = new FakeAgent((input) => {
+      const latest = input.history.at(-1)?.content;
+      if (latest === "My hard spending cap is $15.") {
+        return { text: "I saved your $15 cap.", conditionUpdate: agentConditions({ maxCostCents: 1500 }) };
+      }
+      if (latest === "I need Unknown Friend to come.") {
+        return {
+          text: "I'll check who you mean.",
+          conditionUpdate: agentConditions({ maxCostCents: null, attendanceDependencyNames: ["Unknown Friend"] }),
+        };
+      }
+      return {
+        text: "Jordan needs to attend with you.",
+        conditionUpdate: agentConditions({ maxCostCents: null, attendanceDependencyNames: ["Jordan"] }),
+      };
+    });
+    const outingId = await makeOuting(agent);
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "My hard spending cap is $15.",
+    });
+    const unresolved = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I need Unknown Friend to come.",
+    });
+    expect(unresolved.status).toBe(200);
+    let preference = await db.query<{ interpretation: unknown; interpretation_ready: boolean }>(
+      `select interpretation, interpretation_ready from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    let interpretation = parseJsonValue(preference[0].interpretation, emptyConditionInterpretation());
+    expect(interpretation.hard.maxCostCents).toBe(1500);
+    expect(interpretation.clarifyingQuestions.join(" ")).toContain("couldn't match Unknown Friend");
+    expect(preference[0].interpretation_ready).toBe(false);
+
+    await db.query(
+      `insert into participants
+        (outing_id, user_id, display_name, admission_status, response_status, agent_session_id)
+       values ($1, 'user_jordan', 'Jordan', 'admitted', 'pending', 'ses_jordan-cap-preservation')`,
+      [outingId],
+    );
+    const resolved = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Jordan",
+    });
+    expect(resolved.status).toBe(200);
+    expect((resolved.body.messages as Array<{ content: string }>).at(-1)?.content)
+      .toContain("Should I remove that cap?");
+    preference = await db.query(
+      `select interpretation, interpretation_ready from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    interpretation = parseJsonValue(preference[0].interpretation, emptyConditionInterpretation());
+    expect(interpretation.hard.maxCostCents).toBe(1500);
+    expect(interpretation.hard.attendanceDependencies).toEqual(["user_jordan"]);
+  });
+
+  it("preserves saved limits when a later generic thanks would otherwise clear them", async () => {
+    const agent = new FakeAgent((input) => input.history.at(-1)?.content === "Thanks."
+      ? { text: "You're welcome.", conditionUpdate: agentConditions() }
+      : { text: "I saved your $15 cap.", conditionUpdate: agentConditions({ maxCostCents: 1500 }) });
+    const outingId = await makeOuting(agent);
+
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "My hard spending cap is $15.",
+    });
+    const thanked = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Thanks.",
+    });
+
+    expect(thanked.status).toBe(200);
+    const preference = await db.query<{ interpretation: unknown; conditions_version: number }>(
+      `select interpretation, conditions_version from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    const interpretation = parseJsonValue(preference[0].interpretation, emptyConditionInterpretation());
+    expect(interpretation.hard.maxCostCents).toBe(1500);
+    expect(preference[0].conditions_version).toBe(1);
+  });
+
+  it("asks before weakening a hard limit and requires confirmation for direct corrections", async () => {
+    const agent = new FakeAgent((input) => {
+      const latest = input.history.at(-1)?.content ?? "";
+      if (latest === "I want a movie.") {
+        return { text: "A movie sounds good.", conditionUpdate: agentConditions({ maxCostCents: 2000 }) };
+      }
+      if (latest === "Yes.") {
+        const nextCap = (input.currentConditions?.hard.maxCostCents ?? 0) < 2000 ? 2000 : 2500;
+        return { text: `Your cap is now $${nextCap / 100}.`, conditionUpdate: agentConditions({ maxCostCents: nextCap }) };
+      }
+      if (latest === "Actually, raise my cap to $20.") {
+        return { text: "Your cap is now $20.50.", conditionUpdate: agentConditions({ maxCostCents: 2050 }) };
+      }
+      if (latest.startsWith("Actually, raise")) {
+        return { text: "Your cap is now $25.", conditionUpdate: agentConditions({ maxCostCents: 2500 }) };
+      }
+      return { text: "I saved your $15 cap.", conditionUpdate: agentConditions({ maxCostCents: 1500 }) };
+    });
+    const outingId = await makeOuting(agent);
+
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "My hard spending cap is $15.",
+    });
+    const suggestion = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I want a movie.",
+    });
+    expect(suggestion.status).toBe(200);
+    expect((suggestion.body.messages as Array<{ content: string }>).at(-1)?.content)
+      .toBe("Your strict spending cap is $15.00. The new cap would be $20.00. Should I raise it to $20.00?");
+    let preference = await db.query<{ interpretation: unknown; conditions_version: number; interpretation_ready: boolean }>(
+      `select interpretation, interpretation_ready, conditions_version from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    expect(parseJsonValue(preference[0].interpretation, emptyConditionInterpretation()).hard.maxCostCents).toBe(1500);
+    expect(preference[0].conditions_version).toBe(1);
+
+    const confirmed = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Yes.",
+    });
+    expect(confirmed.status).toBe(200);
+    const correction = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Actually, raise my cap to $25.",
+    });
+    expect((correction.body.messages as Array<{ content: string }>).at(-1)?.content)
+      .toContain("Should I raise it to $25.00?");
+    preference = await db.query(
+      `select interpretation, conditions_version from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    expect(parseJsonValue(preference[0].interpretation, emptyConditionInterpretation()).hard.maxCostCents).toBe(2000);
+    expect(preference[0].conditions_version).toBe(2);
+
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Yes.",
+    });
+    preference = await db.query(
+      `select interpretation, conditions_version from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    expect(parseJsonValue(preference[0].interpretation, emptyConditionInterpretation()).hard.maxCostCents).toBe(2500);
+    expect(preference[0].conditions_version).toBe(3);
+
+    const preciseAmountOutingId = await makeOuting(agent);
+    await sendMessage(ctx(agent), preciseAmountOutingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "My hard spending cap is $15.",
+    });
+    const mismatch = await sendMessage(ctx(agent), preciseAmountOutingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Actually, raise my cap to $20.",
+    });
+    expect((mismatch.body.messages as Array<{ content: string }>).at(-1)?.content)
+      .toContain("Should I raise it to $20.50?");
+    preference = await db.query(
+      `select interpretation, conditions_version from participant_preferences
+        where outing_id = $1 and user_id = $2`, [preciseAmountOutingId, STARTER],
+    );
+    expect(parseJsonValue(preference[0].interpretation, emptyConditionInterpretation()).hard.maxCostCents).toBe(1500);
+    expect(preference[0].conditions_version).toBe(1);
+  });
+
+  it("ignores negated, quoted, and hypothetical relaxations until a clear yes to the exact prompt", async () => {
+    const agent = new FakeAgent((input) => input.history.at(-1)?.content === "My hard spending cap is $15."
+      ? { text: "I saved your $15 cap.", conditionUpdate: agentConditions({ maxCostCents: 1500 }) }
+      : { text: "Your cap is now $20.", conditionUpdate: agentConditions({ maxCostCents: 2000 }) });
+    const outingId = await makeOuting(agent);
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "My hard spending cap is $15.",
+    });
+
+    for (const content of [
+      "Do not raise my budget to $20.",
+      '"Yes, raise my budget to $20."',
+      "What if I raised my budget to $20?",
+    ]) {
+      const result = await sendMessage(ctx(agent), outingId, {
+        clientMessageId: crypto.randomUUID(),
+        content,
+      });
+      expect((result.body.messages as Array<{ content: string }>).at(-1)?.content)
+        .toBe("Your strict spending cap is $15.00. The new cap would be $20.00. Should I raise it to $20.00?");
+      const preference = await db.query<{ interpretation: unknown }>(
+        `select interpretation from participant_preferences where outing_id = $1 and user_id = $2`,
+        [outingId, STARTER],
+      );
+      expect(parseJsonValue(preference[0].interpretation, emptyConditionInterpretation()).hard.maxCostCents).toBe(1500);
+    }
+
+    const refused = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "No.",
+    });
+    expect((refused.body.messages as Array<{ content: string }>).at(-1)?.content)
+      .toBe("Understood. I'll keep your strict spending cap at $15.00.");
+    let preference = await db.query<{ interpretation: unknown; conditions_version: number }>(
+      `select interpretation, conditions_version from participant_preferences where outing_id = $1 and user_id = $2`,
+      [outingId, STARTER],
+    );
+    expect(parseJsonValue(preference[0].interpretation, emptyConditionInterpretation()).hard.maxCostCents).toBe(1500);
+    expect(preference[0].conditions_version).toBe(1);
+
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I want a movie.",
+    });
+    const confirmed = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Okay.",
+    });
+    expect(confirmed.status).toBe(200);
+    preference = await db.query(
+      `select interpretation, conditions_version from participant_preferences where outing_id = $1 and user_id = $2`,
+      [outingId, STARTER],
+    );
+    expect(parseJsonValue(preference[0].interpretation, emptyConditionInterpretation()).hard.maxCostCents).toBe(2000);
+    expect(preference[0].conditions_version).toBe(2);
+  });
+
+  it("clarifies unknown or self attendance names and malformed time windows", async () => {
+    const agent = new FakeAgent(() => ({
+      text: "I can check that.",
+      conditionUpdate: agentConditions({
+        attendanceDependencyNames: ["Nobody", "Starter"],
+        availableWindows: [{
+          startsAt: "2026-11-07T03:00:00.000Z",
+          endsAt: "2026-11-07T01:00:00.000Z",
+        }],
+      }),
+    }));
+    const outingId = await makeOuting(agent);
+
+    const sent = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I can only come if Jordan comes, and I need a time after 8.",
+    });
+    expect(sent.status).toBe(200);
+    const preference = await db.query<{ interpretation: unknown; interpretation_ready: boolean }>(
+      `select interpretation, interpretation_ready from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    const interpretation = parseJsonValue(preference[0].interpretation, emptyConditionInterpretation());
+    expect(interpretation.hard.attendanceDependencies).toEqual([]);
+    expect(interpretation.hard.availableWindows).toEqual([]);
+    expect(interpretation.clarifyingQuestions).toEqual(expect.arrayContaining([
+      expect.stringContaining("couldn't match Nobody"),
+      expect.stringContaining("named yourself"),
+      expect.stringContaining("ends before it starts"),
+    ]));
+    expect(preference[0].interpretation_ready).toBe(false);
+  });
+
+  it("commits condition state with the reply and supersedes published proposals", async () => {
+    const agent = new FakeAgent(() => ({
+      text: "I saved your hard $15 cap.",
+      conditionUpdate: agentConditions({ maxCostCents: 1500 }),
+    }));
+    const outingId = await makeOuting(agent);
+    const option = await db.query<{ id: string; activity: string; starts_at: string | Date; estimated_cost_cents: number }>(
+      `select id, activity, starts_at, estimated_cost_cents from outing_options
+        where outing_id = $1 order by starts_at limit 1`, [outingId],
+    );
+    const proposalId = crypto.randomUUID();
+    await db.query(
+      `insert into proposals
+        (id, outing_id, revision, created_by_user_id, option_id, activity, starts_at,
+         estimated_cost_cents, attendee_user_ids, status, kind, published_at, expires_at, condition_versions)
+       values ($1, $2, 1, $3, $4, $5, $6, $7, $8::jsonb, 'published', 'initial', now(), now() + interval '30 minutes', $9::jsonb)`,
+      [proposalId, outingId, STARTER, option[0].id, option[0].activity, option[0].starts_at,
+        option[0].estimated_cost_cents, JSON.stringify([STARTER]), JSON.stringify({ [STARTER]: 0 })],
+    );
+
+    const sent = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "My hard spending cap is $15.",
+    });
+
+    expect(sent.status).toBe(200);
+    const [preference, proposal, reply] = await Promise.all([
+      db.query<{ conditions_version: number; interpretation_ready: boolean }>(
+        `select conditions_version, interpretation_ready from participant_preferences
+          where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+      ),
+      db.query<{ status: string }>(`select status from proposals where id = $1`, [proposalId]),
+      db.query<{ count: number | string }>(
+        `select count(*)::int as count from messages where outing_id = $1 and role = 'agent'`, [outingId],
+      ),
+    ]);
+    expect(preference[0]).toMatchObject({ conditions_version: 1, interpretation_ready: true });
+    expect(proposal[0].status).toBe("superseded");
+    expect(Number(reply[0].count)).toBe(1);
+  });
+
   it("does not create a second message pair for a duplicate client message id", async () => {
     const agent = new FakeAgent(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -228,6 +776,17 @@ describe("private agent turns", () => {
     let messages = await savedMessages(outingId);
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({ role: "user", status: "failed", error_code: "model_error" });
+    const failedPreference = await db.query<{
+      interpretation: unknown;
+      interpretation_ready: boolean;
+      conditions_version: number;
+    }>(`select interpretation, interpretation_ready, conditions_version
+          from participant_preferences where outing_id = $1 and user_id = $2`, [outingId, STARTER]);
+    expect(failedPreference[0]).toMatchObject({
+      interpretation: null,
+      interpretation_ready: false,
+      conditions_version: 0,
+    });
 
     const working = new FakeAgent(() => "Great, 6:30pm works.");
     const retried = await retryMessage(ctx(working), outingId, failedMessageId);
@@ -251,10 +810,10 @@ describe("private agent turns", () => {
 
   it("recovers a turn that is stuck pending without duplicating the reply", async () => {
     const outingId = await makeOuting(new FakeAgent());
-    let release!: (text: string) => void;
+    let release!: (reply: AgentReply) => void;
     const slow = new FakeAgent(
       () =>
-        new Promise<string>((resolve) => {
+        new Promise<AgentReply>((resolve) => {
           release = resolve;
         }),
     );
@@ -273,18 +832,71 @@ describe("private agent turns", () => {
     });
 
     const recovered = await retryMessage(
-      ctx(new FakeAgent(() => "Recovered reply.")),
+      ctx(new FakeAgent(() => ({
+        text: "Recovered reply.",
+        conditionUpdate: agentConditions({ maxCostCents: 1500 }),
+      }))),
       outingId,
       pendingId,
     );
     expect(recovered.status).toBe(200);
 
-    release("Late reply.");
+    release({ text: "Late reply.", conditionUpdate: agentConditions({ maxCostCents: 2000 }) });
     expect((await inFlight).status).toBe(200);
 
     const messages = await savedMessages(outingId);
     expect(messages.filter((message) => message.role === "user")).toHaveLength(1);
     expect(messages.filter((message) => message.role === "agent")).toHaveLength(1);
+    const preference = await db.query<{ interpretation: unknown; conditions_version: number }>(
+      `select interpretation, conditions_version from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    expect(parseJsonValue(preference[0].interpretation, emptyConditionInterpretation()).hard.maxCostCents).toBe(1500);
+    expect(preference[0].conditions_version).toBe(1);
+  });
+
+  it("rejects a stale model update after a newer turn has saved conditions", async () => {
+    const outingId = await makeOuting(new FakeAgent());
+    let release!: (reply: AgentReply) => void;
+    const slow = new FakeAgent(() => new Promise<AgentReply>((resolve) => { release = resolve; }));
+    const olderTurn = sendMessage(ctx(slow), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "My cap is $10.",
+    });
+    let olderId = "";
+    await waitFor(async () => {
+      const messages = await savedMessages(outingId);
+      if (!release || messages.length !== 1 || messages[0].status !== "pending") return false;
+      olderId = messages[0].id;
+      return true;
+    });
+
+    const newer = await sendMessage(ctx(new FakeAgent(() => ({
+      text: "I saved your $20 cap.",
+      conditionUpdate: agentConditions({ maxCostCents: 2000 }),
+    }))), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Actually, my cap is $20 now.",
+    });
+    expect(newer.status).toBe(200);
+    release({
+      text: "I saved your $10 cap.",
+      conditionUpdate: agentConditions({ maxCostCents: 1000 }),
+    });
+    const stale = await olderTurn;
+
+    expect(stale).toMatchObject({ status: 409, body: { error: "stale_reply", messageId: olderId } });
+    const preference = await db.query<{ interpretation: unknown; conditions_version: number }>(
+      `select interpretation, conditions_version from participant_preferences
+        where outing_id = $1 and user_id = $2`, [outingId, STARTER],
+    );
+    expect(parseJsonValue(preference[0].interpretation, emptyConditionInterpretation()).hard.maxCostCents).toBe(2000);
+    expect(preference[0].conditions_version).toBe(1);
+    const messages = await savedMessages(outingId);
+    expect(messages.find((message) => message.id === olderId)).toMatchObject({
+      status: "failed",
+      error_code: "stale_reply",
+    });
   });
 
   it("keeps a failed message in the agent's context when the starter moves on", async () => {
