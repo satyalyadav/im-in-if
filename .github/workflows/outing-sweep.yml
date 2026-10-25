@@ -1,0 +1,33 @@
+name: Outing maintenance
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outing-maintenance
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Run global maintenance sweep
+        env:
+          SCHEDULER_URL: ${{ secrets.SCHEDULER_URL }}
+          SCHEDULER_SECRET: ${{ secrets.SCHEDULER_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${SCHEDULER_URL:?Configure the SCHEDULER_URL repository secret}"
+          : "${SCHEDULER_SECRET:?Configure the SCHEDULER_SECRET repository secret}"
+          curl --fail --silent --show-error --max-time 20 \
+            --request POST \
+            --header "Authorization: Bearer ${SCHEDULER_SECRET}" \
+            --header "Accept: application/json" \
+            "${SCHEDULER_URL}"

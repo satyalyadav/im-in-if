@@ -21,9 +21,10 @@ function timeLabel(iso: string, timeZone: string): string {
 type Props = {
   outing: OutingView;
   initialMessages: MessageView[];
+  showPlaybill?: boolean;
 };
 
-export function OutingChat({ outing, initialMessages }: Props) {
+export function OutingChat({ outing, initialMessages, showPlaybill = true }: Props) {
   const [messages, setMessages] = useState(initialMessages);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -185,8 +186,8 @@ export function OutingChat({ outing, initialMessages }: Props) {
   }
 
   return (
-    <div className="outing-layout">
-      <aside className="playbill">
+    <div className={showPlaybill ? "outing-layout" : "outing-layout outing-layout-compact"}>
+      {showPlaybill ? <aside className="playbill">
         <p className="playbill-kicker">Your outing</p>
         <h1>{outing.suggestion}</h1>
 
@@ -201,7 +202,7 @@ export function OutingChat({ outing, initialMessages }: Props) {
         <p className="privacy-note">
           Only you and your agent can read this chat. It belongs to this outing alone.
         </p>
-      </aside>
+      </aside> : null}
 
       <section className="chat" aria-label="Private chat with your agent">
         <header className="chat-head">

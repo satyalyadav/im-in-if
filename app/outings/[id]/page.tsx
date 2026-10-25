@@ -1,8 +1,9 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { getCurrentUserId } from "@/lib/auth";
 import { getDb } from "@/lib/db";
-import { getOuting, type MessageView, type OutingView } from "@/lib/outings-api";
-import { OutingChat } from "@/components/outing-chat";
+import { getOutingWorkspace } from "@/lib/planning-api";
+import { OutingWorkspace, type Workspace } from "@/components/outing-workspace";
+import { SignInPanel } from "@/components/sign-in-panel";
 import { TopBar } from "@/components/top-bar";
 
 export const dynamic = "force-dynamic";
@@ -12,20 +13,27 @@ export default async function OutingPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const userId = await getCurrentUserId();
-  if (!userId) redirect("/");
-
   const { id } = await params;
-  const result = await getOuting({ db: await getDb(), userId }, id);
+  const userId = await getCurrentUserId();
+  if (!userId) {
+    return (
+      <main className="page">
+        <TopBar signedIn={false} />
+        <section className="narrow">
+          <h1>Sign in to view your outing</h1>
+          <SignInPanel returnTo={`/outings/${encodeURIComponent(id)}`} />
+        </section>
+      </main>
+    );
+  }
+
+  const result = await getOutingWorkspace({ db: await getDb(), userId }, id);
   if (result.status !== 200) notFound();
 
   return (
     <main className="page">
       <TopBar signedIn />
-      <OutingChat
-        outing={result.body.outing as OutingView}
-        initialMessages={result.body.messages as MessageView[]}
-      />
+      <OutingWorkspace initialWorkspace={result.body as unknown as Workspace} />
     </main>
   );
 }

@@ -1,173 +1,98 @@
-# Issue #1 verification: private ASU agent slice
+# Private planning verification
 
-Checked 2026-10-24. Scope: GitHub issue #1, "Start an outing with a private ASU agent".
+Checked 2026-10-25. This record separates implemented behavior, deployed evidence, and remaining blockers. It does not claim that unit tests alone prove the full browser-to-storage flow.
 
-This record separates what was verified locally from what remains unverified. It does not
-claim that deployment or the seven-day deletion policy is implemented.
-
-## Status
+## Current status
 
 | Area | Status |
 | --- | --- |
-| ASU app API access from non-agent code | Verified with an existing key |
-| ASU model compatibility with the AI SDK request path | Verified for `qwen38-27b` |
-| Free-tier cost and quota fit | Checked; no paid usage required for this slice; no services provisioned |
-| Local browser-to-agent-to-storage flow | Verified against the real ASU gateway |
-| Clerk sign-in in production | Not verified; no Clerk application exists |
-| Neon Postgres in production | Not verified; no Neon project exists |
-| Vercel deployment | Not verified; no project exists |
-| Seven-day deletion job | Not implemented or verified |
-| Private content kept out of requests to other outings, logs, and workflow records | Verified locally for this slice; no workflows are used |
+| Starter chat, per-participant chat ownership, admission, private conditions, catalog, offers, proposals, confirmations, joins, and departures | Implemented. Unit and deployed browser checks passed for the synthetic development-instance flow. |
+| Model selection | Pinned to OpenCode Go `deepseek-v4.1-flash`; no other model or provider fallback. Extra Usage is confirmed off by the user. |
+| DeepSeek live calls | Deployed chat, condition interpretation, and offer generation returned real replies. A direct compatibility check returned `go` billing and numeric zero cost in 1.813 s. Evidence: `/tmp/im-in-if-remaining-run/deepseek-live-check.json`. This does not establish guaranteed planning-app support. |
+| Billing safety | Successful responses without an explicit `go`/`go-plus` source and finite numeric zero cost are rejected. This runs after the provider response and cannot prevent a charge. Extra Usage off is the preventive control. |
+| Production app | Deployed at <https://im-in-if.vercel.app> (Vercel project `prj_zjyTygz8z1k7UkbQdy1lb32v42Xw`). Production uses Clerk, Neon, and the production secrets. |
+| Neon app-accessible restoration | Verified at zero-second history retention with no snapshots. A controlled historical restore probe was rejected. No app outing data existed during the check. |
+| App-held seven-day deletion | Exact `ended_at + 7 days` cascade deletion is implemented and proved against the deployed database with a controlled clock. Tests do not purge early. Vendor-side physical erasure is not claimed. |
+| Email | Resend sender `notify.satyalyadav.com` is verified with all four DNS records. The deployed app sent an admission notice to Resend's `delivered@resend.dev` test sink and recorded `sent`. No human recipient has opted in, so real-recipient delivery is still unverified. |
+| Scheduled maintenance | The authenticated global sweep and health endpoint work in production. A five-minute ID-free GitHub Actions workflow is in source. Activation on `main` and repository-secret wiring remain. |
+| Full browser flow | Completed with three synthetic Clerk development users: creation, invitation, pending denial, admission, private chat, interpretation, tie answers, offers, three-person confirmation, departure, join, expiry, restart, and privacy checks. |
 
-## ASU access and model compatibility
+## Model request and limits
 
-The existing ASU key was read from the shell environment at run time. It was never written to
-the repository, `.env.local`, fixtures, or logs. `.env.example` contains placeholders only.
+The active route is `https://opencode.ai/inference/go/openai/v1` with `deepseek-v4.1-flash`. Requests use the honest `im-in-if/0.1.0` User-Agent and a stable per-participant `x-opencode-session`. The app does not choose GLM, ASU, Zen, or a paid fallback.
 
-Evidence:
+The response guard requires `usage.opencode.billing_source` to be `go` or `go-plus` and every reported provider cost field (`usage.cost`, `usage.cost0`) to be a finite numeric zero. Missing, malformed, nonzero, or conflicting values fail closed. The key is a deployment secret and is absent from the repository and evidence files.
 
-- `GET https://openai.rc.asu.edu/v1/models` with the bearer key returned 52 models. The chat
-  models included `qwen38-27b` (262,144-token context, tools), `glm-5-3-flash`
-  (262,144-token context, tools), and `glm-5-2`.
-- `POST /v1/chat/completions` with `qwen38-27b` and `glm-5-3-flash` each returned the content
-  `ready` for a one-word prompt.
-- The app's exact request path (`ai@7.0.153` with `@ai-sdk/openai-compatible@3.0.78`,
-  `generateText`, system message plus chat history, `maxRetries: 0`) returned `ready` from
-  `qwen38-27b` in 1.3 s, with 24 prompt and 38 completion tokens.
-- `qwen38-27b` does not advertise response-schema support. This slice only needs plain chat
-  completions and text, so that limitation does not block it. Tool calls are not used.
-- ASU documents a fair queue of up to 5 minutes before a `503`, a 60-minute total request
-  limit, and per-minute `429` token budgets. The app uses a 60-second default timeout
-  (`ASU_REQUEST_TIMEOUT_MS`) and no automatic model retries. A failed turn is saved and can
-  be retried by the starter.
-- ASU's gateway keeps request metadata (time, key, model, tokens, status, timing) for 180
-  days. It does not record prompt or reply text. ASU runs models on its own hardware and does
-  not send prompts to commercial providers for this endpoint.
+OpenCode Go is intended for coding-agent traffic and does not guarantee use by this planning app. The current DeepSeek Go free-use term runs through 2026-10-31; recheck it before a later demo. Do not enable Extra Usage or switch providers without an explicit user decision.
 
-The key works for script and application requests, not only the coding agent. It remains a
-personal key: production must store a dedicated key in Vercel environment variables and
-never send it to the browser.
+## Deployment and authentication
 
-## Free-tier checks
+Production is the Vercel project above, served at the stable `https://im-in-if.vercel.app` alias. `APP_BASE_URL` points to that origin, and the production deployment exposes no Vercel SSO wall on that alias. Preview deployments should keep their normal protection.
 
-No service was provisioned. The table records what the provider pages state as of
-2026-10-24.
+Clerk is a **development instance** (`pk_test_`/`sk_test_`). Three synthetic users with `+clerk_test@example.com` addresses were used for deployment checks. Their sessions exercised the real Clerk browser SDK and Neon persistence. This is not evidence of a Clerk production instance, production session-cookie behavior, or the 100-user development limit being sufficient for launch. The synthetic accounts are job-owned and can be removed with `/tmp/im-in-if-remaining-run/managed-auth/cleanup-test-users.mjs`.
 
-| Service | $0 plan | Card or payment requirement | Relevant limits |
-| --- | --- | --- | --- |
-| ASU Research Computing API | No charge for application or script requests | None | Fair queue up to 5 min; 60-minute request cap; per-minute token budget |
-| Vercel Hobby | $0/month | Not stated on the pricing page; not confirmed | 1M function invocations, 4 active CPU-hours, 1 hour of runtime logs, 50k workflow events and 1 GB workflow writes per month |
-| Neon Free | $0/month, permanent | No credit card required (stated) | 100 CU-hours, 1 GB Postgres/project, 6-hour history capped at 1 GB, 1 manual snapshot, no scheduled snapshots |
-| Clerk Hobby | $0/month | No credit card required (stated) | 50,000 MRUs/app, 1-day application log retention, 7-day fixed session lifetime |
-| Resend Free | $0/month | Cards accepted for paid plans; free-plan requirement not stated | 3,000 emails/month, 100/day, 3 domains, 30-day data retention |
+Neon is project `polished-truth-38314900`, main branch only. The app uses pooled `DATABASE_URL`. The schema migration takes a session advisory lock and is idempotent. A missing production database binding fails closed.
 
-The implemented slice needs only the app runtime, Postgres, auth, and outbound model calls.
-It fits the free allowances at demo scale. Vercel and Resend payment-method requirements
-remain unconfirmed because no account or project was opened.
+## Neon retention evidence
 
-## Seven-day deletion feasibility
+Root verified the production Neon project before any outing data was added:
 
-The approved policy deletes app-held outing data seven days after the outing or failed
-attempt ends. The checks below cover restore history, snapshots, workflow state, and logs.
+- The project API returned `history_retention_seconds=0`.
+- The snapshots list had count `0`; the branch list contained only the main branch.
+- A controlled compute-free restore attempt from before the retention change was rejected by the zero-second window. No probe branch was created.
+- Evidence: `/tmp/im-in-if-remaining-run/neon-retention-verification.json` and `/tmp/im-in-if-remaining-run/restore-probe.json`.
 
-- **Neon restore history.** Free keeps a 6-hour point-in-time window, capped at 1 GB of
-  changes. Rows deleted at the seven-day mark can remain in that window until roughly
-  seven days and six hours. A strict seven-day deadline therefore needs the purge to run at
-  or before day 6.5, or the claim must exclude the restore window. No purge job exists yet.
-- **Neon snapshots.** Free includes one manual snapshot and no scheduled snapshots. The
-  deployment must create none. Snapshot existence has not been checked because no project
-  exists.
-- **Vercel Workflows.** On Hobby, run payloads are readable for one day and may be kept for
-  up to 66 days; run metadata may be kept for up to one year. Even `experimental_retention:
-  0` keeps payloads for up to 36 days. Private prompts, replies, conditions, and rankings
-  must stay out of run payloads. This slice starts no workflows. A later timer or cleanup
-  workflow must pass IDs and sanitized offers only.
-- **Logs.** Vercel Hobby keeps runtime logs for 1 hour and traces for 1 hour. Clerk Hobby
-  keeps application logs for 1 day. Neon Free keeps monitoring data for 1 day. The app logs
-  only an error code for a failed agent turn, never message text. The local integration
-  check confirmed that private text did not appear in console or server output.
-- **Resend.** Free retains email data for 30 days. Notices must contain only a return link,
-  never private planning details. Recipient and link records would outlive the seven-day
-  app-data deadline, which is an unresolved policy gap for any email notice.
-- **ASU.** The gateway's 180-day metadata does not contain prompt or reply text. It is a
-  provider-side record, not app-held outing data, and the policy does not claim that vendor
-  records are erased.
-- **Local development store.** `.data/pglite` is a local, gitignored development database.
-  It is not part of a deployment and has no retention job.
+This verifies that app-accessible historical restoration is disabled under the tested project setting. Physical vendor WAL erasure timing is vendor-specific and is not claimed. The approved promise remains exact deletion of app-held outing data seven days after `ended_at`; do not change it to an early-purge policy.
 
-Conclusion: the stack can meet the seven-day deadline for app rows, snapshots, and logs with
-a purge scheduled before day 6.5, no manual snapshots, and no private data in workflow
-payloads. The purge is not implemented, and the restore-history and snapshot checks cannot
-be completed until a Neon project exists. The Resend gap remains.
+## App behavior and privacy boundaries
 
-## Local integration evidence
+- A signed-in invitee receives no outing details before admission. Admission is not attendance or confirmation, and the starter receives an in-app notice.
+- Each participant sees only their own chat, private input, structured conditions, rankings, and draft notes. Shared offers omit private notes. The shared participant list contains only user ID and display name.
+- Server validation checks strict limits and mutual attendance dependencies against the exact attendee set. Model output cannot override those checks or relax a hard condition.
+- Offers may counter only a published offer from another participant. Tie answers are private and saved once. Only one tie poll may be open per outing. The tie result constrains newly generated and already-published offers; all-either answers still require a new proposal and explicit human approvals.
+- Each proposal revision binds the option, activity, time, estimated cost, attendee IDs, and a version of every listed participant's conditions. All listed attendees must approve the same revision. A condition change after publication expires or rejects the proposal. The shared deadline is the earlier of publication plus 30 minutes or activity start.
+- Expiry leaves the roster unchanged. Only an admitted participant can request a restart. A restarted proposal needs new approvals from every listed person and does not inherit earlier approvals.
+- A confirmed join or departure creates a revised proposal. The remaining and new roster must approve it. A failed or stale request is expired rather than silently replacing the confirmed plan. If a departure makes the remaining roster infeasible, the old confirmation is superseded and the outing returns to planning for explicit renegotiation instead of ending for everyone.
+- The scheduler stores only aggregate run timestamps and counts. It receives no outing IDs, conditions, chats, or offer data. Logs contain generic failure codes.
+- Admission and final-approval emails are opt-in only and require a verified account email in production. The message contains a short return link and no planning details. Provider idempotency keys and event keys make retries safe. Ambiguous deliveries are not retried after the provider idempotency window.
+- Deleting an outing cascades through participants, preferences, messages, options, offers, proposals, approvals, join and departure requests, tie polls and answers, in-app notices, and email outbox rows.
 
-Automated checks (`npx vitest run`, 24 tests in 3 files):
+## Verification runs
 
-- Cutoff resolution keeps the intended instant in Phoenix, Kolkata, and New York, rejects a
-  spring-forward gap, chooses the earlier occurrence of a fall-back wall time, and rejects
-  invalid dates, times, and zones.
-- Creating an outing without a cutoff is rejected. The stored cutoff is the explicit one the
-  starter supplied.
-- A second signed-in account gets `404` for the outing page, the outing API, sends, and
-  retries. Direct requests with another account's cookie were also checked against the
-  running app.
-- A turn saves the starter's message and the agent reply, and a reload returns both.
-- The agent receives only the current outing's suggestion and history; another outing's
-  private text is absent from the request.
-- Two concurrent sends with the same client message ID produce one user row, one agent row,
-  and one model call.
-- A failed model request leaves the user message saved with a `failed` status and no agent
-  row. A retry completes the same turn without creating a second user message.
-- A failed message stays in the agent's context when the starter later sends a new message.
-- A turn that is still pending can be retried; when both the original and retry responses
-  arrive, the database keeps one user row and one agent row.
-- Console methods captured during a turn contain neither the private prompt nor the reply.
-- The real ASU gateway answered in a browser session (22.1 s and 10.2 s for two turns), the
-  conversation survived a reload, and an intruder account saw the styled 404 page and no
-  message text.
-- A browser turn with an invalid model returned `502`, kept the user message, and showed
-  "Ask again". After the server was restarted with the real model, that retry produced one
-  agent reply and no duplicate user row. Server output contained only
-  `agent turn failed model_error`, not the message text.
+### Source checks
 
-Reproduce:
+- `npx vitest run` with `maxWorkers: 1`: 51 of 51 tests passed on 2026-10-25.
+- `npm run typecheck`: passed.
+- `AUTH_MODE=local npm run build`: passed.
 
-```bash
-npm install
-cp .env.example .env.local   # set ASU_API_KEY; AUTH_MODE=local
-npm run dev
-npm test
-npm run typecheck
-AUTH_MODE=local npm run build
-```
+### Deployed browser-to-storage checks
 
-## Unresolved blockers
+All checks used the production deployment and production Neon database, with synthetic Clerk development users and synthetic planning content.
 
-1. No Clerk application, Neon project, or Vercel project exists, so production sign-in,
-   managed Postgres, deployment, and the actual provider log retention and restore history
-   are unverified.
-2. Clerk mode is compiled but not exercised. The local cookie adapter is development-only and
-   throws when `NODE_ENV=production` or `VERCEL` is set.
-3. The seven-day purge job is not implemented. Purge timing relative to Neon's six-hour
-   restore window, snapshot absence, and restore-history checks are open deployment tasks.
-4. Resend notices are not implemented, and Resend's 30-day retention is incompatible with a
-   strict seven-day claim unless the claim excludes vendor email records.
-5. `qwen38-27b` is active today but can be retired. The app reads `ASU_MODEL` from the
-   environment so a replacement does not require a code change.
-6. The app uses an embedded PGlite database only in development. A production process
-   without `DATABASE_URL` refuses to start the local adapter instead of falling back silently.
+- Created an outing from the browser with an explicit response cutoff.
+- Sent and received real private chat replies through OpenCode Go DeepSeek in all three participant sessions.
+- Ran condition interpretation through the model, then saved the corrected structured conditions.
+- Invited two friends, confirmed pending invitees could not open the outing, and admitted both. A non-starter admission attempt returned 404.
+- Closed every browser, waited for the cutoff, and invoked the authenticated sweep. The sweep processed the cutoff without ending an outing whose admitted participants were interested. Health was fresh and contained no outing IDs.
+- Started a private A/B tie follow-up, answered `either` from all three participants, and generated offers constrained to the resolved tie and the full interested set.
+- Published the proposal, and confirmed the same revision from all three listed attendees. The database recorded three approvals, one confirmed proposal, and three in-app confirmation notices.
+- Requested a departure, confirmed the revised two-person proposal, then requested a join and confirmed the revised three-person proposal. Revisions 1 and 2 were superseded; revision 3 was confirmed.
+- Expired a proposal by controlled database clock, ran the sweep without a client action, verified the proposal expired and left the roster unchanged, restarted it as an admitted participant, and confirmed revision 2 with fresh approvals from both attendees.
+- Verified direct-request denials: pending invitee 404, signed-in stranger 404, non-starter admission 404, pending participant planning 404, and anonymous request 401. A participant's workspace did not contain another participant's private input.
+- Verified deletion with a controlled clock: ended an outing, moved `ended_at` eight days into the past, ran the sweep, and found zero rows for the outing and all thirteen cascading tables. The same signed-in account still loaded and the deleted outing returned 404.
+- Verified the email sender by asking the app to send an admission notice to Resend's `delivered@resend.dev` test sink. The outbox recorded `sent`; no human address received mail and no synthetic Clerk user was opted in.
 
-## Deployment checklist
+Evidence lives under `/tmp/im-in-if-remaining-run/`, including `e2e/privacy.json`, `e2e/expiry.json`, `e2e/deletion.json`, `e2e/email-sink.json`, and `logs/`.
 
-1. Create the Neon project, run the app against `DATABASE_URL`, and confirm migrations.
-2. Confirm no manual snapshots exist. Schedule the purge before day 6.5 or narrow the
-   deletion claim to the live database.
-3. Create the Clerk application, set both keys, remove `AUTH_MODE=local`, and verify that
-   direct requests from a second account return `404`.
-4. Create the Vercel Hobby project, add `DATABASE_URL`, Clerk keys, and a dedicated
-   `ASU_API_KEY`; confirm Vercel and Resend do not require a card for the selected flow.
-5. Repeat the browser flow against the deployment and inspect Vercel runtime logs for private
-   text.
-6. Keep private data out of any future Workflow payloads and use zero retention where
-   possible.
+### Scheduled maintenance
+
+The authenticated endpoint `POST /api/maintenance/sweep` ran in production and returned aggregate counts. `GET /api/maintenance/health` reported a fresh successful run with no outing identifiers. The same endpoint is ready for a repository workflow, but the workflow is not active until it is on the default branch and `SCHEDULER_URL` and `SCHEDULER_SECRET` repository secrets are set. GitHub scheduled events are best effort; request-time deadline checks remain authoritative.
+
+## Remaining external work and limits
+
+1. Activate the GitHub Actions workflow on `main` and set `SCHEDULER_URL` and `SCHEDULER_SECRET`. Trigger one manual run and check health afterward.
+2. Real email delivery needs a recipient who explicitly opts in with a verified address on their own account. The sender and provider path are verified, but sending to a person without that opt-in is not authorized.
+3. The Clerk instance is development-only. A production launch needs a Clerk production instance and a review of session-cookie behavior, domain settings, and user limits.
+4. The free-use term for the current DeepSeek Go route ends 2026-10-31. Recheck terms before a later demo. Never enable Extra Usage or switch providers without an explicit user decision.
+5. The app uses the free Vercel/Neon/Clerk/Resend tiers. Current quotas are sufficient for this demo but are not a capacity guarantee.
+6. Booking, payments, trips, live showtime discovery, native messaging, reminders, and past-plan archives remain out of scope.

@@ -1,0 +1,738 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { formatZonedDateTime } from "@/lib/cutoff";
+import { OutingChat } from "@/components/outing-chat";
+import type { MessageView, OutingView } from "@/lib/outings-api";
+import {
+  emptyConditionInterpretation,
+  type CatalogOption,
+  type ConditionInterpretation,
+  type PublicOffer,
+  type PublicParticipant,
+} from "@/lib/planning-types";
+
+type ProposalView = {
+  id: string;
+  revision: number;
+  optionId: string;
+  activity: string;
+  startsAt: string;
+  estimatedCostCents: number;
+  attendeeUserIds: string[];
+  status: string;
+  kind: string;
+  publishedAt: string;
+  expiresAt: string;
+  confirmedAt: string | null;
+  approvalCount: number;
+};
+
+export type Workspace = {
+  viewerUserId: string;
+  outing: {
+    id: string;
+    suggestion: string;
+    cutoffAt: string;
+    cutoffTimeZone: string;
+    inviteToken: string | null;
+    status: string;
+    cutoffProcessedAt: string | null;
+    endedAt: string | null;
+    isStarter: boolean;
+    createdAt: string;
+  };
+  participants: PublicParticipant[];
+  pendingAdmissions: Array<{ userId: string; displayName: string; requestedAt: string }>;
+  options: CatalogOption[];
+  myPrivateInput: string;
+  myConditions: ConditionInterpretation | null;
+  myConditionsReady: boolean;
+  myRankings: string[];
+  myResponseStatus: string;
+  messages: MessageView[];
+  offers: PublicOffer[];
+  myDraftOffers: Array<PublicOffer & { privateNote: string }>;
+  proposal: ProposalView | null;
+  myProposalApproved: boolean;
+  confirmedProposal: ProposalView | null;
+  expiredProposal: ProposalView | null;
+  myJoinRequest: { status: string } | null;
+  myDepartureRequest: { status: string } | null;
+  myTiePoll: null | {
+    id: string;
+    optionA: CatalogOption | null;
+    optionB: CatalogOption | null;
+    status: string;
+    outcome: string | null;
+    selectedOptionId: string | null;
+    myAnswer: "a" | "b" | "either" | null;
+    answeredCount: number;
+    participantCount: number;
+    createdAt: string;
+  };
+  notifications: Array<{
+    id: string;
+    kind: string;
+    actorName: string | null;
+    createdAt: string;
+  }>;
+  myEmailEvents: Array<{ eventType: string; status: string; errorCode: string | null }>;
+  myEmailOptIn: boolean;
+  myNotificationEmail: string | null;
+  myVerifiedEmails: string[];
+  emailProviderConfigured: boolean;
+};
+
+type Action = Record<string, unknown> & { action: string };
+type ActionRunner = (action: Action) => Promise<boolean>;
+
+const ERROR_COPY: Record<string, string> = {
+  agent_unavailable: "The DeepSeek Go agent is not configured for this deployment.",
+  usage_not_included: "The provider did not confirm zero-cost Go usage. No response was accepted.",
+  clarification_required: "Answer or resolve the private question before saving these conditions.",
+  conditions_need_review: "Review and save your conditions before responding.",
+  confirmed_conditions_locked: "Conditions are locked for the confirmed plan. Request to leave if it no longer works for you.",
+  response_cutoff_passed: "The response cutoff has passed.",
+  offer_not_feasible: "That offer conflicts with one or more strict conditions.",
+  tie_options_not_feasible: "Both options must satisfy every attendee's strict conditions.",
+  proposal_expired: "This proposal expired without reshuffling the attendee list.",
+  proposal_not_current: "This proposal was replaced by a newer revision.",
+  activity_already_started: "This activity has already started.",
+  verified_email_required: "Choose an email verified on your signed-in account.",
+  outing_not_active: "This outing has ended.",
+  email_unconfigured: "Email updates are opted in, but email delivery is not configured.",
+  email_invalid_base_url: "Email delivery needs a valid secure return-link address.",
+  tie_choice_required: "This offer must follow the private tie result for the same people.",
+  counter_offer_target_unavailable: "Choose a published offer from another participant to counter.",
+  plan_changed: "The confirmed attendee list changed while this request was being saved. Review the latest plan and try again.",
+  departure_not_feasible: "The remaining attendees cannot use this plan under their strict conditions. Your departure request was not applied.",
+  agreement_still_open: "A proposal or private tie follow-up is still open, or your interest has not been recorded.",
+  tie_needs_two_interested_people: "At least two interested people are needed for a private tie follow-up.",
+};
+
+function money(cents: number): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+}
+
+function dateTime(value: string, timeZone: string): string {
+  return formatZonedDateTime(new Date(value), timeZone);
+}
+
+function tagsFromText(value: string): string[] {
+  return [...new Set(value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))];
+}
+
+function linesFromText(value: string): string[] {
+  return value.split("\n").map((item) => item.trim()).filter(Boolean);
+}
+
+function errorText(code: string): string {
+  return ERROR_COPY[code] ?? "That change could not be saved. Review it and try again.";
+}
+
+function PlannerButton({
+  children,
+  disabled,
+  onClick,
+  type = "button",
+}: {
+  children: React.ReactNode;
+  disabled?: boolean;
+  onClick?: () => void;
+  type?: "button" | "submit";
+}) {
+  return (
+    <button className="button button-solid planner-button" type={type} disabled={disabled} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
+function ConditionsEditor({
+  workspace,
+  busy,
+  act,
+}: {
+  workspace: Workspace;
+  busy: boolean;
+  act: ActionRunner;
+}) {
+  const [privateInput, setPrivateInput] = useState(workspace.myPrivateInput);
+  const [draft, setDraft] = useState<ConditionInterpretation>(
+    workspace.myConditions ?? emptyConditionInterpretation(),
+  );
+  const [maxCost, setMaxCost] = useState(
+    workspace.myConditions?.hard.maxCostCents === null || !workspace.myConditions
+      ? ""
+      : (workspace.myConditions.hard.maxCostCents / 100).toFixed(2),
+  );
+  const [conditionError, setConditionError] = useState<string | null>(null);
+
+  const conditionKey = JSON.stringify(workspace.myConditions);
+  useEffect(() => {
+    const next = workspace.myConditions ?? emptyConditionInterpretation();
+    setDraft(next);
+    setPrivateInput(workspace.myPrivateInput);
+    setMaxCost(next.hard.maxCostCents === null ? "" : (next.hard.maxCostCents / 100).toFixed(2));
+  }, [conditionKey, workspace.myPrivateInput]);
+
+  function updateHard<K extends keyof ConditionInterpretation["hard"]>(
+    key: K,
+    value: ConditionInterpretation["hard"][K],
+  ) {
+    setDraft((current) => ({ ...current, hard: { ...current.hard, [key]: value } }));
+  }
+
+  function save() {
+    setConditionError(null);
+    const cents = maxCost.trim() === "" ? null : Math.round(Number(maxCost) * 100);
+    if (maxCost.trim() && (cents === null || !Number.isFinite(cents) || cents < 0 || cents > 100_000)) {
+      setConditionError("Enter a spending limit between $0 and $1,000.");
+      return;
+    }
+    if (draft.hard.availableWindows.some((window) =>
+      !Number.isFinite(new Date(window.startsAt).getTime()) ||
+      !Number.isFinite(new Date(window.endsAt).getTime()) ||
+      new Date(window.startsAt) >= new Date(window.endsAt),
+    )) {
+      setConditionError("Each time window needs valid start and end timestamps, and the end must be later.");
+      return;
+    }
+    void act({
+      action: "save_conditions",
+      interpretation: {
+        ...draft,
+        hard: { ...draft.hard, maxCostCents: Number.isFinite(cents) ? cents : null },
+      },
+    });
+  }
+
+  function updateWindow(index: number, field: "startsAt" | "endsAt", value: string) {
+    const windows = [...draft.hard.availableWindows];
+    windows[index] = { ...windows[index], [field]: value };
+    updateHard("availableWindows", windows);
+  }
+
+  return (
+    <section className="planner-card" aria-labelledby="conditions-title">
+      <p className="playbill-kicker">Private to you</p>
+      <h2 id="conditions-title">Your conditions</h2>
+      <p className="planner-help">
+        Your private notes and limits stay with your account. The model sees only your inputs and shared plan information.
+      </p>
+      <label className="planner-label" htmlFor="private-planning-input">What should your agent know?</label>
+      <textarea
+        id="private-planning-input"
+        className="planner-textarea"
+        value={privateInput}
+        onChange={(event) => setPrivateInput(event.target.value)}
+        maxLength={4000}
+        rows={4}
+        placeholder="For example: I need to be home by 9, and I can spend up to $20."
+      />
+      <div className="planner-actions">
+        <PlannerButton
+          disabled={busy || privateInput.trim().length === 0}
+          onClick={() => void act({ action: "save_private_input", privateInput })}
+        >
+          Ask DeepSeek to interpret
+        </PlannerButton>
+      </div>
+
+      {draft.clarifyingQuestions.length > 0 ? (
+        <div className="clarification-box" role="status">
+          <strong>Needs your review</strong>
+          <ul>{draft.clarifyingQuestions.map((question, index) => <li key={`${index}-${question}`}>{question}</li>)}</ul>
+        </div>
+      ) : null}
+
+      <div className="condition-fields">
+        <div className="field">
+          <label htmlFor="condition-max-cost">Strict spending limit</label>
+          <div className="inline-input"><span aria-hidden="true">$</span><input
+            id="condition-max-cost" type="number" min="0" max="1000" step="0.01"
+            value={maxCost} onChange={(event) => setMaxCost(event.target.value)} placeholder="No limit"
+          /></div>
+        </div>
+        <div className="field">
+          <label htmlFor="condition-min-size">Minimum group size</label>
+          <input
+            id="condition-min-size" type="number" min="1" max="20"
+            value={draft.hard.minimumGroupSize}
+            onChange={(event) => updateHard("minimumGroupSize", Math.min(20, Math.max(1, Number(event.target.value) || 1)))}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="required-tags">Required activities (one per line)</label>
+          <textarea id="required-tags" className="planner-textarea" rows={2}
+            value={draft.hard.requiredActivityTags.join("\n")}
+            onChange={(event) => updateHard("requiredActivityTags", tagsFromText(event.target.value))}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="avoided-tags">Activities to avoid (one per line)</label>
+          <textarea id="avoided-tags" className="planner-textarea" rows={2}
+            value={draft.hard.avoidedActivityTags.join("\n")}
+            onChange={(event) => updateHard("avoidedActivityTags", tagsFromText(event.target.value))}
+          />
+        </div>
+        <fieldset className="dependency-field">
+          <legend>People who must attend with you</legend>
+          {workspace.participants.filter((person) => person.userId !== workspace.viewerUserId).length === 0 ? (
+            <p className="hint">No other admitted people yet.</p>
+          ) : workspace.participants.filter((person) => person.userId !== workspace.viewerUserId).map((person) => (
+            <label key={person.userId} className="check-row">
+              <input
+                type="checkbox"
+                checked={draft.hard.attendanceDependencies.includes(person.userId)}
+                disabled={person.userId === ""}
+                onChange={(event) => updateHard(
+                  "attendanceDependencies",
+                  event.target.checked
+                    ? [...draft.hard.attendanceDependencies, person.userId]
+                    : draft.hard.attendanceDependencies.filter((id) => id !== person.userId),
+                )}
+              />
+              <span>{person.displayName}</span>
+            </label>
+          ))}
+        </fieldset>
+        <fieldset className="dependency-field">
+          <legend>Times you can attend</legend>
+          <p className="hint">Use ISO timestamps with a UTC offset, such as 2026-11-06T18:00:00-07:00.</p>
+          {draft.hard.availableWindows.map((window, index) => (
+            <div className="window-row" key={`window-${index}`}>
+              <label>
+                <span>Start</span>
+                <input value={window.startsAt} onChange={(event) => updateWindow(index, "startsAt", event.target.value)} />
+              </label>
+              <label>
+                <span>End</span>
+                <input value={window.endsAt} onChange={(event) => updateWindow(index, "endsAt", event.target.value)} />
+              </label>
+              <button className="text-button" type="button" onClick={() => updateHard(
+                "availableWindows", draft.hard.availableWindows.filter((_, rowIndex) => rowIndex !== index),
+              )}>Remove time</button>
+            </div>
+          ))}
+          {draft.hard.availableWindows.length < 12 ? (
+            <button className="text-button" type="button" onClick={() => updateHard(
+              "availableWindows", [...draft.hard.availableWindows, { startsAt: "", endsAt: "" }],
+            )}>Add a time window</button>
+          ) : null}
+        </fieldset>
+        <div className="field">
+          <label htmlFor="flexible-preferences">Flexible preferences (one per line)</label>
+          <textarea id="flexible-preferences" className="planner-textarea" rows={3}
+            value={draft.flexiblePreferences.join("\n")}
+            onChange={(event) => setDraft((current) => ({ ...current, flexiblePreferences: linesFromText(event.target.value) }))}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="clarifying-questions">Questions still to answer (one per line)</label>
+          <textarea id="clarifying-questions" className="planner-textarea" rows={2}
+            value={draft.clarifyingQuestions.join("\n")}
+            onChange={(event) => setDraft((current) => ({ ...current, clarifyingQuestions: linesFromText(event.target.value) }))}
+          />
+          <p className="hint">Clear a question after you have answered it. An agent cannot clear it for you.</p>
+        </div>
+      </div>
+      {conditionError ? <p className="form-error" role="alert">{conditionError}</p> : null}
+      <PlannerButton disabled={busy} onClick={save}>Save my structured conditions</PlannerButton>
+      <p className="condition-status" role="status">
+        {workspace.myConditionsReady ? "Conditions saved. You can choose whether to participate." : "Review and save these conditions before responding."}
+      </p>
+    </section>
+  );
+}
+
+function CatalogPanel({ workspace, busy, act }: { workspace: Workspace; busy: boolean; act: ActionRunner }) {
+  const [title, setTitle] = useState("");
+  const [activity, setActivity] = useState("");
+  const [startsAt, setStartsAt] = useState("");
+  const [cost, setCost] = useState("");
+  const [tags, setTags] = useState("");
+  const ordered = useMemo(() => {
+    const rank = new Map(workspace.myRankings.map((id, index) => [id, index]));
+    return [...workspace.options].sort((a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999));
+  }, [workspace.options, workspace.myRankings]);
+
+  function moveRank(optionId: string, direction: -1 | 1) {
+    const ids = [...workspace.myRankings.filter((id) => workspace.options.some((option) => option.id === id))];
+    if (!ids.includes(optionId)) ids.push(optionId);
+    const index = ids.indexOf(optionId);
+    const next = index + direction;
+    if (next < 0 || next >= ids.length) return;
+    [ids[index], ids[next]] = [ids[next], ids[index]];
+    void act({ action: "rank_options", optionIds: ids });
+  }
+
+  async function addOption(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const starts = new Date(startsAt);
+    if (!Number.isFinite(starts.getTime())) return;
+    const ok = await act({
+      action: "add_option", title, activity, startsAt: starts.toISOString(),
+      estimatedCostCents: Math.round(Number(cost) * 100), activityTags: tagsFromText(tags),
+    });
+    if (ok) { setTitle(""); setActivity(""); setStartsAt(""); setCost(""); setTags(""); }
+  }
+
+  return (
+    <section className="planner-card" aria-labelledby="catalog-title">
+      <p className="playbill-kicker">Shared options</p>
+      <h2 id="catalog-title">The catalog</h2>
+      <p className="planner-help">Labeled samples are examples only. Add a real option or rank what suits you.</p>
+      {workspace.options.length === 0 ? <p className="empty-light">No options yet. Add a manual option to start comparing.</p> : null}
+      <ol className="option-list">
+        {ordered.map((option) => {
+          const rank = workspace.myRankings.indexOf(option.id);
+          return (
+            <li className="option-card" key={option.id}>
+              <div className="option-heading">
+                <div><h3>{option.title}</h3><p>{option.activity}</p></div>
+                <span className={`source-tag source-${option.source}`}>{option.source === "sample" ? "Sample" : "Manual"}</span>
+              </div>
+              <p className="option-meta">{dateTime(option.startsAt, workspace.outing.cutoffTimeZone)} · {money(option.estimatedCostCents)}</p>
+              {option.activityTags.length ? <p className="tag-list">{option.activityTags.join(" · ")}</p> : null}
+              <div className="rank-actions">
+                {rank < 0 ? (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => void act({
+                      action: "rank_options",
+                      optionIds: [...workspace.myRankings.filter((id) => workspace.options.some((item) => item.id === id)), option.id],
+                    })}
+                  >
+                    Rank this option
+                  </button>
+                ) : null}
+                <span>{rank < 0 ? "Not ranked" : `Your rank: ${rank + 1}`}</span>
+                <button type="button" className="text-button" onClick={() => moveRank(option.id, -1)} aria-label={`Move ${option.title} up in your ranking`}>Move up</button>
+                <button type="button" className="text-button" onClick={() => moveRank(option.id, 1)} aria-label={`Move ${option.title} down in your ranking`}>Move down</button>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      <details className="manual-option">
+        <summary>Add a manual option</summary>
+        <form className="planning-form" onSubmit={addOption}>
+          <div className="field"><label htmlFor="option-title">Short title</label><input id="option-title" required maxLength={120} value={title} onChange={(event) => setTitle(event.target.value)} /></div>
+          <div className="field"><label htmlFor="option-activity">Activity</label><input id="option-activity" required maxLength={80} value={activity} onChange={(event) => setActivity(event.target.value)} /></div>
+          <div className="field"><label htmlFor="option-start">Start time in your browser time zone</label><input id="option-start" type="datetime-local" required value={startsAt} onChange={(event) => setStartsAt(event.target.value)} /></div>
+          <div className="field"><label htmlFor="option-cost">Estimated cost per person (USD)</label><input id="option-cost" type="number" min="0" max="1000" step="0.01" required value={cost} onChange={(event) => setCost(event.target.value)} /></div>
+          <div className="field"><label htmlFor="option-tags">Activity tags (comma separated)</label><input id="option-tags" maxLength={300} value={tags} onChange={(event) => setTags(event.target.value)} /></div>
+          <PlannerButton type="submit" disabled={busy}>Add option</PlannerButton>
+        </form>
+      </details>
+    </section>
+  );
+}
+
+function OfferPanel({ workspace, busy, act }: { workspace: Workspace; busy: boolean; act: ActionRunner }) {
+  const canPublishPlan = Boolean(workspace.outing.cutoffProcessedAt) && !workspace.confirmedProposal;
+  return (
+    <section className="planner-card" aria-labelledby="offers-title">
+      <p className="playbill-kicker">Negotiation</p>
+      <h2 id="offers-title">Offers from the group</h2>
+      <p className="planner-help">Offers are suggestions. Only you can publish your draft, and only people can approve a final proposal.</p>
+      {workspace.myConditionsReady && workspace.myResponseStatus === "interested" ? (
+        <PlannerButton disabled={busy || workspace.options.length === 0} onClick={() => void act({ action: "generate_offer" })}>
+          Ask DeepSeek for an offer
+        </PlannerButton>
+      ) : <p className="empty-light">Save your conditions and choose “I’m interested” to draft an offer.</p>}
+
+      {workspace.myDraftOffers.map((offer) => (
+        <article className="offer-card offer-private" key={offer.id}>
+          <p className="playbill-kicker">Your private draft</p>
+          <h3>{offer.activity}</h3>
+          <p>{dateTime(offer.startsAt, workspace.outing.cutoffTimeZone)} · {money(offer.estimatedCostCents)}</p>
+          {offer.privateNote ? <p className="private-note">Only you see this note: {offer.privateNote}</p> : null}
+          <PlannerButton disabled={busy} onClick={() => void act({ action: "publish_offer", offerId: offer.id })}>Publish this offer</PlannerButton>
+        </article>
+      ))}
+
+      {workspace.offers.length ? (
+        <div className="offer-list">
+          {workspace.offers.map((offer) => {
+            const owner = workspace.participants.find((person) => person.userId === offer.ownerUserId);
+            return (
+              <article className="offer-card" key={offer.id}>
+                <p className="playbill-kicker">Offer from {owner?.displayName ?? "a participant"}</p>
+                <h3>{offer.activity}</h3>
+                <p>{dateTime(offer.startsAt, workspace.outing.cutoffTimeZone)} · {money(offer.estimatedCostCents)}</p>
+                {offer.counterOfferToId ? (
+                  <p className="hint dark-hint">
+                    Counteroffer to {workspace.offers.find((item) => item.id === offer.counterOfferToId)?.activity ?? "a published offer"}
+                  </p>
+                ) : null}
+                <p>{offer.attendeeUserIds.length} proposed attendee{offer.attendeeUserIds.length === 1 ? "" : "s"}</p>
+                {canPublishPlan ? (
+                  <PlannerButton disabled={busy} onClick={() => void act({ action: "publish_proposal", offerId: offer.id })}>
+                    Put this plan up for confirmation
+                  </PlannerButton>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+      ) : <p className="empty-light">Published offers appear here. Each person’s draft and private note stay private.</p>}
+      {!workspace.outing.cutoffProcessedAt ? <p className="hint dark-hint">Offers can be proposed after the response cutoff.</p> : null}
+    </section>
+  );
+}
+
+function AgreementPanel({ workspace, busy, act }: { workspace: Workspace; busy: boolean; act: ActionRunner }) {
+  const { proposal, confirmedProposal, expiredProposal, myTiePoll } = workspace;
+  const tieOptions = workspace.options.slice(0, 2);
+
+  return (
+    <section className="planner-card" aria-labelledby="agreement-title">
+      <p className="playbill-kicker">People decide</p>
+      <h2 id="agreement-title">Confirmation</h2>
+      {proposal ? (
+        <article className="proposal-card" aria-label={`Proposal revision ${proposal.revision}`}>
+          <p className="playbill-kicker">Revision {proposal.revision} · Confirm before {dateTime(proposal.expiresAt, workspace.outing.cutoffTimeZone)}</p>
+          <h3>{proposal.activity}</h3>
+          <p>{dateTime(proposal.startsAt, workspace.outing.cutoffTimeZone)} · {money(proposal.estimatedCostCents)}</p>
+          <p>{proposal.attendeeUserIds.length} proposed attendee{proposal.attendeeUserIds.length === 1 ? "" : "s"} · {proposal.approvalCount} approval{proposal.approvalCount === 1 ? "" : "s"}</p>
+          <p className="hint dark-hint">Attendees: {proposal.attendeeUserIds.map((id) => workspace.participants.find((person) => person.userId === id)?.displayName ?? "A participant").join(", ")}</p>
+          {proposal.attendeeUserIds.includes(workspace.participants.find((p) => p.userId)?.userId ?? "") ? null : null}
+          {proposal.attendeeUserIds.includes(workspace.viewerUserId) ? (
+            workspace.myProposalApproved
+              ? <p className="condition-status" role="status">You confirmed this revision. It still needs every listed person.</p>
+              : <PlannerButton disabled={busy} onClick={() => void act({ action: "approve_proposal", proposalId: proposal.id, revision: proposal.revision })}>Confirm this exact plan</PlannerButton>
+          ) : <p className="hint dark-hint">You are not on this proposal’s attendee list.</p>}
+          <p className="hint dark-hint">A material change creates a new revision and asks everyone again.</p>
+        </article>
+      ) : null}
+      {expiredProposal && !confirmedProposal ? (
+        <article className="proposal-card">
+          <p className="playbill-kicker">Revision {expiredProposal.revision} expired</p>
+          <p>No roster changes were made. An admitted participant can request a fresh confirmation.</p>
+          <PlannerButton disabled={busy} onClick={() => void act({ action: "restart_proposal", proposalId: expiredProposal.id })}>Ask everyone again</PlannerButton>
+        </article>
+      ) : null}
+      {confirmedProposal ? (
+        <article className="proposal-card proposal-confirmed">
+          <p className="playbill-kicker">Confirmed plan</p>
+          <h3>{confirmedProposal.activity}</h3>
+          <p>{dateTime(confirmedProposal.startsAt, workspace.outing.cutoffTimeZone)} · {money(confirmedProposal.estimatedCostCents)}</p>
+          <p className="hint dark-hint">Attendees: {confirmedProposal.attendeeUserIds.map((id) => workspace.participants.find((person) => person.userId === id)?.displayName ?? "A participant").join(", ")}</p>
+          <p>Everyone on this roster approved revision {confirmedProposal.revision}.</p>
+          {!confirmedProposal.attendeeUserIds.includes(workspace.viewerUserId) ? (
+            <PlannerButton disabled={busy || Boolean(workspace.myJoinRequest && ["pending", "proposed"].includes(workspace.myJoinRequest.status))} onClick={() => void act({ action: "request_join" })}>
+              Request to join this plan
+            </PlannerButton>
+          ) : (
+            <PlannerButton disabled={busy || Boolean(workspace.myDepartureRequest && ["pending", "proposed"].includes(workspace.myDepartureRequest.status))} onClick={() => void act({ action: "request_departure" })}>
+              Request to leave the roster
+            </PlannerButton>
+          )}
+          {workspace.myJoinRequest ? <p className="hint dark-hint">Your join request: {workspace.myJoinRequest.status}.</p> : null}
+          {workspace.myDepartureRequest ? <p className="hint dark-hint">Your departure request: {workspace.myDepartureRequest.status}.</p> : null}
+        </article>
+      ) : null}
+      {myTiePoll ? (
+        <article className="tie-card">
+          <p className="playbill-kicker">Private tie follow-up</p>
+          <p>Choose A, B, or either. Only your answer is shown to you.</p>
+          <div className="tie-options">
+            <p><strong>A.</strong> {myTiePoll.optionA?.title ?? "Option unavailable"}</p>
+            <p><strong>B.</strong> {myTiePoll.optionB?.title ?? "Option unavailable"}</p>
+          </div>
+          {myTiePoll.status === "open" && !myTiePoll.myAnswer ? (
+            <div className="planner-actions">
+              {(["a", "b", "either"] as const).map((answer) => (
+                <PlannerButton key={answer} disabled={busy} onClick={() => void act({ action: "answer_tie", pollId: myTiePoll.id, answer })}>
+                  {answer === "either" ? "Either works" : `Choose ${answer.toUpperCase()}`}
+                </PlannerButton>
+              ))}
+            </div>
+          ) : <p className="condition-status" role="status">Your answer: {myTiePoll.myAnswer ?? "not recorded"} · {myTiePoll.answeredCount} of {myTiePoll.participantCount} answered.</p>}
+          {myTiePoll.status === "no_agreement" ? <p>No option received a compatible set of private answers.</p> : null}
+        </article>
+      ) : null}
+      {!proposal && !confirmedProposal && !expiredProposal && !myTiePoll ? (
+        <p className="empty-light">A plan appears here after the response cutoff and offer review.</p>
+      ) : null}
+      {workspace.outing.cutoffProcessedAt && !proposal && !confirmedProposal && tieOptions.length >= 2 && workspace.myResponseStatus === "interested" ? (
+        <details className="tie-setup">
+          <summary>Ask for a private A/B tie follow-up</summary>
+          <p className="planner-help">Each person answers once. If everyone chooses either, the result is still only a candidate plan.</p>
+          <PlannerButton disabled={busy} onClick={() => void act({
+            action: "start_tie_poll", optionAId: tieOptions[0].id, optionBId: tieOptions[1].id,
+          })}>Start tie follow-up for interested people</PlannerButton>
+        </details>
+      ) : null}
+      {workspace.outing.cutoffProcessedAt && !confirmedProposal && !proposal ? (
+        <PlannerButton disabled={busy} onClick={() => void act({ action: "declare_no_agreement" })}>End without an agreement</PlannerButton>
+      ) : null}
+      {workspace.outing.isStarter && !workspace.outing.endedAt ? (
+        <PlannerButton disabled={busy} onClick={() => void act({ action: "end_outing" })}>End this outing</PlannerButton>
+      ) : null}
+    </section>
+  );
+}
+
+function EmailPanel({ workspace, busy, act }: { workspace: Workspace; busy: boolean; act: ActionRunner }) {
+  const [optIn, setOptIn] = useState(workspace.myEmailOptIn);
+  const [email, setEmail] = useState(workspace.myNotificationEmail ?? workspace.myVerifiedEmails[0] ?? "");
+  useEffect(() => {
+    setOptIn(workspace.myEmailOptIn);
+    setEmail(workspace.myNotificationEmail ?? workspace.myVerifiedEmails[0] ?? "");
+  }, [workspace.myEmailOptIn, workspace.myNotificationEmail, workspace.myVerifiedEmails.join("|")]);
+
+  return (
+    <section className="planner-card" aria-labelledby="email-title">
+      <p className="playbill-kicker">Optional email</p>
+      <h2 id="email-title">Email updates</h2>
+      <p className="planner-help">Only admission and final confirmation. Emails contain no planning details.</p>
+      <label className="check-row">
+        <input type="checkbox" checked={optIn} disabled={workspace.myVerifiedEmails.length === 0}
+          onChange={(event) => setOptIn(event.target.checked)} />
+        <span>Send me opted-in planning updates</span>
+      </label>
+      {optIn && workspace.myVerifiedEmails.length > 0 ? (
+        <div className="field">
+          <label htmlFor="my-verified-email">Verified email on your account</label>
+          <select id="my-verified-email" value={email} onChange={(event) => setEmail(event.target.value)}>
+            {workspace.myVerifiedEmails.map((address) => <option key={address} value={address}>{address}</option>)}
+          </select>
+        </div>
+      ) : null}
+      {workspace.myVerifiedEmails.length === 0 ? <p className="hint">Add and verify an email on your sign-in account to opt in.</p> : null}
+      <PlannerButton disabled={busy} onClick={() => void act({
+        action: "save_email_preferences", emailOptIn: optIn, email: optIn ? email : null,
+      })}>Save email preference</PlannerButton>
+      {!workspace.emailProviderConfigured ? <p className="hint dark-hint">Email provider setup is incomplete. In-app notices still appear here.</p> : null}
+      {workspace.myEmailEvents.length ? (
+        <ul className="email-events">
+          {workspace.myEmailEvents.map((event, index) => <li key={`${event.eventType}-${index}`}>{event.eventType.replaceAll("_", " ")}: {event.errorCode ?? event.status}</li>)}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+export function OutingWorkspace({ initialWorkspace }: { initialWorkspace: Workspace }) {
+  const [workspace, setWorkspace] = useState(initialWorkspace);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function refresh() {
+    try {
+      const response = await fetch(`/api/outings/${workspace.outing.id}`, { cache: "no-store" });
+      if (!response.ok) return;
+      setWorkspace(await response.json() as Workspace);
+    } catch {
+      // The next refresh or page interaction will try again.
+    }
+  }
+
+  useEffect(() => {
+    const timer = setInterval(() => void refresh(), 15_000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace.outing.id]);
+
+  async function act(action: Action): Promise<boolean> {
+    if (busy) return false;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/outings/${workspace.outing.id}/planning`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(action),
+      });
+      const data = await response.json().catch(() => null) as (Workspace & { error?: string }) | null;
+      if (!response.ok) {
+        setError(errorText(data?.error ?? "unknown"));
+        if (response.status === 409) void refresh();
+        return false;
+      }
+      setWorkspace(data as Workspace);
+      return true;
+    } catch {
+      setError("The connection dropped. Refresh to check whether your change was saved.");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const outing: OutingView = {
+    ...workspace.outing,
+    cutoffDisplay: formatZonedDateTime(new Date(workspace.outing.cutoffAt), workspace.outing.cutoffTimeZone),
+  };
+  const latestNotification = workspace.notifications[0];
+
+  return (
+    <div className="workspace-layout">
+      <aside className="playbill">
+        <p className="playbill-kicker">Your outing</p>
+        <h1>{workspace.outing.suggestion}</h1>
+        <p className="planner-status">{workspace.outing.status.replaceAll("_", " ")}</p>
+        <div className="participant-summary">
+          <p className="cutoff-label">Admitted people</p>
+          <ul>{workspace.participants.map((person) => <li key={person.userId}>{person.displayName}</li>)}</ul>
+        </div>
+        {workspace.outing.inviteToken ? (
+          <div className="invite-link-card">
+            <label htmlFor="invite-url">Invite link</label>
+            <input id="invite-url" readOnly value={`/invite/${workspace.outing.inviteToken}`} onFocus={(event) => event.currentTarget.select()} />
+            <button type="button" className="text-button" onClick={() => {
+              void navigator.clipboard.writeText(`${window.location.origin}/invite/${workspace.outing.inviteToken}`);
+            }}>Copy invitation link</button>
+            <p className="hint dark-hint">The link only requests admission. The starter decides who can see the outing.</p>
+          </div>
+        ) : null}
+        {workspace.outing.isStarter && workspace.pendingAdmissions.length > 0 ? (
+          <section className="admission-list" aria-labelledby="admission-title">
+            <h2 id="admission-title">Requests to join</h2>
+            {workspace.pendingAdmissions.map((request) => (
+              <article className="admission-request" key={request.userId}>
+                <strong>{request.displayName}</strong>
+                <div className="planner-actions">
+                  <PlannerButton disabled={busy} onClick={() => void act({ action: "decide_admission", userId: request.userId, decision: "admit" })}>Admit</PlannerButton>
+                  <button className="text-button" type="button" disabled={busy} onClick={() => void act({ action: "decide_admission", userId: request.userId, decision: "reject" })}>Decline</button>
+                </div>
+              </article>
+            ))}
+          </section>
+        ) : null}
+        <p className="privacy-note">Only you and your agent can read this private chat and your conditions.</p>
+      </aside>
+
+      <div className="workspace-content">
+        {error ? <p className="planner-alert" role="alert">{error}</p> : null}
+        {latestNotification ? (
+          <aside className="notice-banner" aria-label="Latest in-app notice">
+            <strong>Planning update</strong>
+            <span>{latestNotification.kind.replaceAll("_", " ")}{latestNotification.actorName ? ` · ${latestNotification.actorName}` : ""}</span>
+          </aside>
+        ) : null}
+        <OutingChat outing={outing} initialMessages={workspace.messages} showPlaybill={false} />
+        <ConditionsEditor workspace={workspace} busy={busy} act={act} />
+        <section className="planner-card response-card" aria-labelledby="response-title">
+          <p className="playbill-kicker">Your response</p>
+          <h2 id="response-title">Would you like to be considered?</h2>
+          <p className="planner-help">This is only your interest. It is not attendance or confirmation.</p>
+          <div className="planner-actions">
+            <PlannerButton disabled={busy || !workspace.myConditionsReady || Boolean(workspace.outing.cutoffProcessedAt)} onClick={() => void act({ action: "set_interest", interested: true })}>I’m interested</PlannerButton>
+            <button className="text-button" type="button" disabled={busy || Boolean(workspace.outing.cutoffProcessedAt)} onClick={() => void act({ action: "set_interest", interested: false })}>I’m not interested</button>
+          </div>
+          <p className="condition-status">Your response: {workspace.myResponseStatus.replaceAll("_", " ")}</p>
+        </section>
+        <CatalogPanel workspace={workspace} busy={busy} act={act} />
+        <OfferPanel workspace={workspace} busy={busy} act={act} />
+        <AgreementPanel workspace={workspace} busy={busy} act={act} />
+        <EmailPanel workspace={workspace} busy={busy} act={act} />
+      </div>
+    </div>
+  );
+}

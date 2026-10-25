@@ -1,5 +1,5 @@
-import { getAsuAgent, type Agent } from "@/lib/agent";
-import { getRequestUserId } from "@/lib/auth";
+import { getAgent, type Agent } from "@/lib/agent";
+import { getRequestUserId, getVerifiedAccountEmails } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import type { ApiResponse, OwnerContext } from "@/lib/outings-api";
 
@@ -9,12 +9,16 @@ export async function requireContext(request: Request): Promise<OwnerContext | R
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  return { userId, db: await getDb() };
+  const [db, verifiedEmails] = await Promise.all([
+    getDb(),
+    getVerifiedAccountEmails(userId),
+  ]);
+  return { userId, db, verifiedEmails };
 }
 
 export function requireAgent(): Agent | Response {
   try {
-    return getAsuAgent();
+    return getAgent();
   } catch {
     return Response.json({ error: "unavailable" }, { status: 503 });
   }

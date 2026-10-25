@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react";
 
-export function LocalSignInForm() {
+export function LocalSignInForm({ returnTo = "/" }: { returnTo?: string }) {
   const id = useId();
   const [userId, setUserId] = useState("starter");
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +25,7 @@ export function LocalSignInForm() {
       return;
     }
 
-    window.location.assign("/");
+    window.location.assign(returnTo);
   }
 
   return (

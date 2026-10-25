@@ -7,6 +7,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "sweep": "node scripts/sweep-outings.mjs",
+    "maintenance:health": "node scripts/check-maintenance.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

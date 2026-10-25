@@ -704,6 +704,499 @@ a {
   min-height: 48px;
 }
 
+/* Planning workspace */
+
+.workspace-layout {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.7fr) minmax(0, 1.3fr);
+  gap: clamp(22px, 4vw, 42px);
+  align-items: start;
+}
+
+.workspace-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.outing-layout-compact {
+  display: block;
+}
+
+.outing-layout-compact .chat {
+  max-height: none;
+  min-height: 380px;
+}
+
+.planner-card,
+.invitation-card {
+  padding: clamp(20px, 3vw, 28px);
+  border: 1px solid #08110d;
+  background: var(--screen);
+  box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.25);
+  color: var(--ink);
+  color-scheme: light;
+}
+
+.planner-card h2,
+.invitation-card h1 {
+  margin: 0 0 12px;
+  font-family: var(--serif);
+  font-size: clamp(1.65rem, 2.5vw, 2.2rem);
+  font-weight: 480;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+}
+
+.planner-card h3,
+.option-card h3,
+.offer-card h3,
+.proposal-card h3 {
+  margin: 0 0 4px;
+  font-family: var(--serif);
+  font-size: 1.28rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.planner-card .playbill-kicker,
+.invitation-card .playbill-kicker {
+  color: var(--muted-on-light);
+}
+
+.planner-help,
+.empty-light {
+  margin: 0 0 16px;
+  color: #52695b;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.planner-label,
+.condition-fields .field > label,
+.manual-option .field > label,
+.email-choice legend {
+  display: block;
+  margin: 14px 0 6px;
+  color: #3f5549;
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+.planner-textarea,
+.planning-form input,
+.planning-form select,
+.condition-fields input,
+.invite-link-card input,
+.email-choice input[type="email"],
+.invite-link-card input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 10px;
+  border: 1px solid #9daf9f;
+  border-radius: 0;
+  background: #fffdf7;
+  color: var(--ink);
+  font: inherit;
+}
+
+.planner-textarea {
+  resize: vertical;
+}
+
+.planner-actions,
+.rank-actions,
+.invitation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-top: 12px;
+}
+
+.planner-button {
+  min-height: 42px;
+  margin-top: 8px;
+  padding: 0 14px;
+  font-size: 0.86rem;
+}
+
+.planner-card .text-button,
+.invitation-card .text-button {
+  color: #345844;
+  font-size: 0.84rem;
+}
+
+.condition-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 20px;
+  margin: 22px 0 6px;
+  padding-top: 16px;
+  border-top: 1px dashed #9daf9f;
+}
+
+.condition-fields .field,
+.manual-option .field {
+  margin-bottom: 8px;
+}
+
+.condition-fields .field > label,
+.manual-option .field > label {
+  margin-top: 6px;
+}
+
+.inline-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-input span {
+  color: #52695b;
+}
+
+.inline-input input {
+  flex: 1;
+}
+
+.dependency-field,
+.email-choice {
+  min-width: 0;
+  margin: 4px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid #b7c7b9;
+}
+
+.dependency-field legend,
+.email-choice legend {
+  padding: 0 5px;
+  color: #3f5549;
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 8px 0;
+  color: #33493c;
+  font-size: 0.88rem;
+}
+
+.check-row input {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: #315c43;
+}
+
+.window-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.window-row label span {
+  display: block;
+  margin: 0 0 4px;
+  color: #52695b;
+  font-size: 0.76rem;
+}
+
+.window-row input {
+  font-size: 0.78rem;
+}
+
+.condition-status {
+  margin: 10px 0 0;
+  color: #3e6b4c;
+  font-size: 0.84rem;
+}
+
+.clarification-box {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--curtain);
+  background: #f7e5df;
+  color: #54281f;
+  font-size: 0.88rem;
+}
+
+.clarification-box ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.option-list {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.option-card,
+.offer-card,
+.proposal-card,
+.tie-card {
+  padding: 16px;
+  border: 1px solid #b7c7b9;
+  background: #f8fbf5;
+  color: var(--ink);
+}
+
+.option-card p,
+.offer-card p,
+.proposal-card p,
+.tie-card p {
+  margin: 4px 0;
+  color: #52695b;
+  font-size: 0.88rem;
+}
+
+.option-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.option-heading p {
+  margin: 0;
+  color: #667b6d;
+}
+
+.source-tag {
+  align-self: flex-start;
+  padding: 3px 8px;
+  border: 1px solid #9daf9f;
+  color: #42594b;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.source-sample {
+  border-color: #b28b35;
+  background: #f7e8be;
+}
+
+.source-manual {
+  background: #e3ece4;
+}
+
+.option-meta {
+  margin-top: 10px !important;
+  color: #324a3b !important;
+}
+
+.tag-list {
+  color: #667b6d !important;
+  font-size: 0.78rem !important;
+}
+
+.rank-actions {
+  margin-top: 8px;
+  color: #64786a;
+  font-size: 0.76rem;
+}
+
+.rank-actions .text-button {
+  margin-left: auto;
+}
+
+.rank-actions .text-button + .text-button {
+  margin-left: 0;
+}
+
+.manual-option,
+.tie-setup {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed #9daf9f;
+}
+
+.manual-option summary,
+.tie-setup summary {
+  color: #345844;
+  font-size: 0.9rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.planning-form {
+  margin-top: 12px;
+}
+
+.offer-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.offer-private {
+  margin: 16px 0;
+  border-color: #b28b35;
+  background: #fff5d9;
+}
+
+.private-note {
+  color: #7b4d16 !important;
+  font-style: italic;
+}
+
+.proposal-confirmed {
+  border-color: #4b7b59;
+  background: #edf5e9;
+}
+
+.tie-card {
+  margin-top: 14px;
+  border-left: 3px solid #b28b35;
+}
+
+.tie-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tie-options p {
+  padding: 10px;
+  background: #fffdf7;
+}
+
+.invite-link-card,
+.participant-summary,
+.admission-list {
+  margin-top: 22px;
+  padding: 14px 0;
+  border-top: 1px dashed rgba(232, 238, 227, 0.25);
+}
+
+.invite-link-card label,
+.participant-summary .cutoff-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted-on-dark);
+  font-size: 0.8rem;
+}
+
+.invite-link-card input {
+  border-color: rgba(232, 238, 227, 0.3);
+  background: var(--house-soft);
+  color: var(--screen);
+}
+
+.invite-link-card .text-button {
+  margin-top: 7px;
+}
+
+.dark-hint {
+  color: #72897a;
+}
+
+.participant-summary ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #d1ddd4;
+  font-size: 0.9rem;
+}
+
+.planner-status {
+  display: inline-block;
+  margin: -10px 0 8px;
+  padding: 3px 8px;
+  background: rgba(232, 238, 227, 0.09);
+  color: #c4d2c8;
+  font-size: 0.75rem;
+  text-transform: capitalize;
+}
+
+.admission-list h2 {
+  margin: 0 0 12px;
+  color: var(--screen);
+  font-family: var(--serif);
+  font-size: 1.3rem;
+  font-weight: 480;
+}
+
+.admission-request {
+  margin: 10px 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(232, 238, 227, 0.12);
+  color: var(--screen);
+}
+
+.admission-request .button {
+  min-height: 38px;
+}
+
+.admission-request .text-button {
+  color: var(--marquee);
+}
+
+.planner-alert {
+  margin: 0;
+  padding: 12px 16px;
+  border-left: 3px solid var(--curtain);
+  background: #f7ded8;
+  color: #7d2418;
+}
+
+.notice-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 12px 16px;
+  border-left: 3px solid var(--marquee);
+  background: rgba(232, 238, 227, 0.08);
+  color: var(--screen);
+  font-size: 0.86rem;
+}
+
+.email-events {
+  margin: 14px 0 0;
+  padding-left: 18px;
+  color: #667b6d;
+  font-size: 0.78rem;
+}
+
+.email-choice {
+  margin: 18px 0;
+}
+
+@media (max-width: 900px) {
+  .workspace-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-layout .playbill {
+    position: static;
+  }
+}
+
+@media (max-width: 560px) {
+  .condition-fields,
+  .tie-options,
+  .window-row {
+    grid-template-columns: 1fr;
+  }
+
+  .planner-card,
+  .invitation-card {
+    padding: 19px;
+  }
+
+  .option-heading {
+    align-items: flex-start;
+  }
+}
+
 /* Responsive */
 
 @media (max-width: 900px) {

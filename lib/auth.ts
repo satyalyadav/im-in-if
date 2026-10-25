@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { cookies } from "next/headers";
 import {
   assertLocalAuthAllowed,
@@ -41,4 +41,14 @@ export async function getCurrentUserId(): Promise<string | null> {
 
   const { userId } = await auth();
   return userId ?? null;
+}
+
+export async function getVerifiedAccountEmails(userId: string): Promise<string[]> {
+  if (isLocalAuth()) return [`${userId}@example.test`];
+
+  const user = await currentUser();
+  if (!user || user.id !== userId) return [];
+  return user.emailAddresses
+    .filter((address) => address.verification?.status === "verified")
+    .map((address) => address.emailAddress.trim().toLowerCase());
 }
