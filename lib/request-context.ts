@@ -1,0 +1,34 @@
+import { getAsuAgent, type Agent } from "@/lib/agent";
+import { getRequestUserId } from "@/lib/auth";
+import { getDb, type Db } from "@/lib/db";
+import type { ApiResponse } from "@/lib/outings-api";
+
+export type RequestContext = {
+  userId: string;
+  db: Db;
+};
+
+export async function requireContext(request: Request): Promise<RequestContext | Response> {
+  const userId = await getRequestUserId(request);
+  if (!userId) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  return { userId, db: await getDb() };
+}
+
+export function requireAgent(): Agent | Response {
+  try {
+    return getAsuAgent();
+  } catch {
+    return Response.json({ error: "unavailable" }, { status: 503 });
+  }
+}
+
+export function toResponse(result: ApiResponse): Response {
+  return Response.json(result.body, { status: result.status });
+}
+
+export async function readJson(request: Request): Promise<unknown> {
+  return request.json().catch(() => null);
+}

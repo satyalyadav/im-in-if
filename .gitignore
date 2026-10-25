@@ -1,4 +1,10 @@
 .env
 .env.*
 !.env.example
+.env.local
 .DS_Store
+node_modules/
+.next/
+.data/
+*.tsbuildinfo
+next-env.d.ts
