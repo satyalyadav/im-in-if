@@ -8,7 +8,7 @@ The app has local sign-in, private participant chats and conditions, invitation 
 
 The only active model route is OpenCode Go `deepseek-v4.1-flash`. It has no model or provider fallback. The successful response must report OpenCode Go/Go Plus billing and numeric zero cost; this check runs after the provider response and cannot prevent a charge. Keep the account's Extra Usage setting off before any request. OpenCode Go is intended for coding-agent traffic and does not guarantee support for a planning app. Recheck the model's current free-use terms before later demos.
 
-Vercel, Clerk, and Neon project bindings exist. The app is deployed at <https://im-in-if.vercel.app>. Neon app-accessible restore history is set to zero and no snapshots exist; the verification record describes the evidence and its limits. The authenticated maintenance sweep runs in production. A scheduled GitHub Actions workflow is in source but still needs repository secrets and activation on the default branch. Resend sender verification is complete and a test-sink send succeeded; a real recipient must still opt in before any human delivery.
+Vercel, Clerk, and Neon project bindings exist. The app is deployed at <https://im-in-if.vercel.app>. Neon app-accessible restore history is set to zero and no snapshots exist; the verification record describes the evidence and its limits. The authenticated maintenance sweep runs in production. A five-minute GitHub Actions workflow is active on the default branch with repository secrets configured. Resend sender verification is complete and a test-sink send succeeded; a real recipient must still opt in before any human delivery.
 
 ## Run locally
 
