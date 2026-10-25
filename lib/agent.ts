@@ -1,8 +1,10 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
+  APICallError,
   generateText,
   InvalidToolInputError,
   Output,
+  RetryError,
   ToolChoiceViolationError,
   tool,
 } from "ai";
@@ -188,6 +190,55 @@ function isInvalidToolReply(error: unknown): boolean {
     current = current.cause;
   }
   return false;
+}
+
+export type SafeAgentFailureDiagnostic = {
+  errorClass:
+    | "APICallError"
+    | "RetryError"
+    | "InvalidToolInputError"
+    | "ToolChoiceViolationError"
+    | "AgentError"
+    | "UnknownError";
+  statusCode?: number;
+  retryable?: boolean;
+};
+
+export function getSafeAgentFailureDiagnostic(error: unknown): SafeAgentFailureDiagnostic {
+  const pending: unknown[] = [error];
+  const seen = new Set<object>();
+  let errorClass: SafeAgentFailureDiagnostic["errorClass"] = "UnknownError";
+
+  while (pending.length > 0 && seen.size < 12) {
+    const current = pending.shift();
+    if (!(current instanceof Error) || seen.has(current)) continue;
+    seen.add(current);
+
+    if (APICallError.isInstance(current)) {
+      const statusCode = current.statusCode;
+      return {
+        errorClass: "APICallError",
+        ...(typeof statusCode === "number" && Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599
+          ? { statusCode }
+          : {}),
+        retryable: current.isRetryable,
+      };
+    }
+    if (RetryError.isInstance(current)) {
+      errorClass = "RetryError";
+      pending.push(current.lastError, ...current.errors);
+    } else if (InvalidToolInputError.isInstance(current)) {
+      errorClass = "InvalidToolInputError";
+    } else if (ToolChoiceViolationError.isInstance(current)) {
+      errorClass = "ToolChoiceViolationError";
+    } else if (current instanceof AgentError) {
+      errorClass = "AgentError";
+    }
+
+    pending.push(current.cause);
+  }
+
+  return { errorClass };
 }
 
 function normalizedJson<T>(text: string, schema: z.ZodType<T>): T {

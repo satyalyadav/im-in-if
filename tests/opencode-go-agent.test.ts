@@ -1,7 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentError, ACTIVE_GO_MODEL, createOpenCodeGoAgent } from "@/lib/agent";
+import { APICallError } from "ai";
+import {
+  AgentError,
+  ACTIVE_GO_MODEL,
+  createOpenCodeGoAgent,
+  getSafeAgentFailureDiagnostic,
+} from "@/lib/agent";
 
 type Captured = {
   body: Record<string, unknown>;
@@ -131,6 +137,29 @@ afterEach(async () => {
 });
 
 describe("OpenCode Go agent boundary", () => {
+  it("extracts only allowlisted HTTP status details from a wrapped SDK error", () => {
+    const privateValue = "PRIVATE-CAP-15-AND-SECRET";
+    const apiError = new APICallError({
+      message: privateValue,
+      url: `https://provider.invalid/${privateValue}`,
+      requestBodyValues: { prompt: privateValue },
+      responseHeaders: { authorization: privateValue },
+      responseBody: privateValue,
+      statusCode: 503,
+      isRetryable: true,
+    });
+    const error = new AgentError("model_error", "model request failed", { cause: apiError });
+
+    const diagnostic = getSafeAgentFailureDiagnostic(error);
+
+    expect(diagnostic).toEqual({
+      errorClass: "APICallError",
+      statusCode: 503,
+      retryable: true,
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain(privateValue);
+  });
+
   it("pins DeepSeek, uses an honest app identity and stable session, and accepts explicit zero-cost metadata", async () => {
     const expected = {
       text: "Compare two synthetic times.",

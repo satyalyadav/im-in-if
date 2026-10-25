@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { AgentError, type Agent } from "@/lib/agent";
+import {
+  AgentError,
+  getSafeAgentFailureDiagnostic,
+  type Agent,
+} from "@/lib/agent";
 import { formatZonedDateTime, resolveCutoffInstant } from "@/lib/cutoff";
 import { prepareConversationConditionUpdate } from "@/lib/conversation-conditions";
 import type { Db } from "@/lib/db";
@@ -414,6 +418,15 @@ async function generateReply(
           and exists (select 1 from outings where id = $3 and ended_at is null)`,
       [userMessage.id, code, outing.id],
     );
+    if (code === "model_error") {
+      console.error(
+        "[DEBUG-provider-status-20261025]",
+        JSON.stringify({
+          stage: "agent_turn",
+          ...getSafeAgentFailureDiagnostic(error),
+        }),
+      );
+    }
     console.error("agent turn failed", code);
 
     return {
