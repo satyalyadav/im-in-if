@@ -16,7 +16,7 @@ The first version covers one local outing among existing student friends. The de
 
 The first version uses a small catalog of candidate options with stated showtimes and prices. People can add options manually. Synthetic or sample entries must be labeled clearly. The catalog does not claim live discovery or verified ticket prices. Live discovery for movie showtimes, restaurants, and events is deferred.
 
-Each participant provides conditions and option rankings anew for each outing. Carrying these forward as memory is outside this version. Signing in does not imply reuse of earlier preferences. The app deletes private planning data it stores, including private agent chats, conditions, and option rankings, seven days after the outing or failed planning attempt ends. Sign-in accounts remain. This policy does not require deleting accounts or claim that model or email providers erase their copies. Retention of other plan data remains open.
+Each personal agent works on one outing and has no persistent memory beyond it. Participants provide conditions and option rankings anew for each outing; sign-in does not imply reuse of earlier preferences. Seven days after an outing or failed attempt ends, delete all app-held outing data, including private chats, conditions, rankings, offers, proposals, and approval history. Keep sign-in accounts. Past-plan archives are outside this version. This policy does not claim that model or email providers, backups, or platform logs erase their copies.
 
 ## Conditions, preferences, and negotiation
 
@@ -42,11 +42,11 @@ A signed-in invitee who opens the shared invitation link can request admission t
 
 A pending admission request does not count as attendance or extend the response cutoff. A late nonresponder may request admission, but admission alone does not include them in the current proposal. After the current group confirms, an admitted person may submit a separate join request to be added to the attendee list. That request leaves the confirmed plan intact until everyone in the revised attendee group, including the joiner, has explicitly approved the revised plan.
 
-For the demo, email approval and admission notices are in scope only for recipients who have opted in. The app should record each recipient's opt-in before sending. Email notices should contain a short return-to-app link, not private planning details. The starter always receives an in-app notice for an admission request. The approved sender approach uses a subdomain of an existing domain; no domain purchase or DNS change has been made. The email provider, DNS write access, and sender verification remain unconfirmed, and delivery is not guaranteed. Other notification channels are outside the hackathon scope.
+For the demo, admission and final-approval event notices are in scope only for recipients who have opted in. Record opt-in before sending. Email notices contain a short return-to-app link, not private planning details. The starter always receives an in-app notice for an admission request. No scheduled reminder emails are requested for this version. The approved sender approach uses a subdomain of an existing domain; no domain purchase or DNS change has been made. The email provider, DNS write access, and sender verification remain unconfirmed, and delivery is not guaranteed. Other notification channels are outside the hackathon scope.
 
 ## Response cutoff and confirmation
 
-The starter sets a response cutoff. A person who has not replied by the cutoff is not part of the current proposed group. This establishes only that they did not respond in time; their reason is unknown. It must not be interpreted as a decline, loss of interest, or unavailability.
+The starter must choose a response-cutoff date and time; the app does not set a default. A person who has not replied by the cutoff is not part of the current proposed group. This establishes only that they did not respond in time; their reason is unknown. It must not be interpreted as a decline, loss of interest, or unavailability.
 
 After the cutoff, the process reassesses the willing attendee set against every remaining person's conditions, including strict limits and attendance dependencies. A missing named person can make another participant ineligible. Earlier approvals for a larger group do not transfer to the revised plan.
 
@@ -58,18 +58,14 @@ If someone leaves a confirmed attendee group, that changes the attendee list. Th
 
 A material change to the activity, time, estimated cost, or attendee list requires renewed confirmation from each remaining participant. Previous approvals apply to the plan those participants approved.
 
-## Product questions still open
+## Product policy status
 
-- How people express a choice among multiple workable options when preferences conflict beyond the single A/B/either tie follow-up; no vote, majority, maximum-attendance rule, or starter tie-break is set
-- The default response-cutoff length
-- Whether to send reminder emails, and if so, their timing
-- How long to retain plan, offer, decision, and shared-feed data after private chats, conditions, and rankings are deleted
-- How long agents persist beyond an outing
+No unresolved product policies are identified for this MVP. Remaining technical and interface choices are listed below.
 
 ## Build choices not selected
 
 - Sign-in and identity provider, and how a signed-in account matches an invited person
-- Exact AI model, email provider, and application credential setup; ASU is the recommended API candidate, conditional on zero incremental cost and model compatibility
+- ASU is the primary AI API choice, conditional on the $0 cap, model compatibility, and app access; exact model and credential setup remain unverified. Email provider and sending setup are also unselected.
 - Data store and deployment target
 - Plan versioning, timestamps, and any atomic handling of simultaneous approvals
 - Technical enforcement of admission, access, and privacy rules
