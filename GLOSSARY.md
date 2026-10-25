@@ -39,3 +39,6 @@ A plan the agents have negotiated that remains subject to approval by the people
 
 **Confirmation**:
 A participant's explicit approval of the activity, time, estimated cost, and attendee list. Their own agent asks for approval; silence does not count.
+
+**Join request**:
+A request from someone outside a confirmed attendee group to join it. It does not change the existing plan; everyone in the proposed revised group must meet their conditions and explicitly approve it.

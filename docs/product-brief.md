@@ -23,11 +23,11 @@ If a condition's meaning or strictness is unclear, the agent asks its own user a
 
 A smaller willing group may proceed if each attendee's conditions hold. A person who does not attend does not automatically veto the others' plan. Attendance dependencies can be evaluated together against one proposed attendee set. Mutually dependent people do not need unconditional prior commitments, but each must explicitly confirm that same plan through their own agent. A missing named person may make another participant ineligible. For example, if Bob will attend only if Maya attends, Maya's absence can make Bob ineligible.
 
-Agents explain feasible options and tradeoffs in simple terms so people can choose. The product does not automatically prioritize the largest group. Which person or people have final authority when choices conflict remains open.
+Agents explain feasible options and tradeoffs in simple terms. The product does not impose an attendance-first choice. The starter may decide the initial direction, but everyone contacted about the plan should have a say afterward. The selection method, tie handling, and the starter's later role remain open.
 
 Each agent asks its own user to approve the plan. The user makes the decision; the agent does not commit on the user's behalf. A confirmation covers the activity, time, estimated cost, and attendee list. Booking and payment are outside the first version.
 
-The intended sharing policy keeps each student's budget caps, other raw constraints, and personal reasons private to that student and their own agent. Other agents and the shared planning context receive only approved offer details, such as proposed attendees, time, and estimated cost. Offers and refusals may still reveal clues.
+The intended sharing policy keeps each student's budget caps, other raw constraints, and personal reasons private to that student and their own agent. The shared group page displays brief offers and counteroffers using only approved details, along with the current proposal and its status. A shared update could say "7PM does not work for this group; how about 8?" without naming who objected or why. The page does not show private agent conversations, raw limits, or personal reasons. This describes the intended sharing policy, not a technical security guarantee. Offers and refusals may still reveal clues.
 
 ## Chosen first-version interaction
 
@@ -39,18 +39,21 @@ The initiator sets a response cutoff. A person who has not replied by the cutoff
 
 After the cutoff, the process reassesses the willing attendee set against every remaining person's conditions, including strict limits and attendance dependencies. A missing named person can make another participant ineligible. Each remaining person's own agent asks them to explicitly confirm the revised activity, time, estimated cost, and attendee list. Earlier approvals for a larger group do not transfer to the revised plan. An agent cannot commit for its user, and silence is not approval.
 
-Final user confirmation may happen after the response cutoff within a finite window. The window's default length remains open. If no willing group fits the current replies and known options, the interaction can report that no workable outcome was found for this attempt. This does not prove that no real-world plan exists, and the exact wording for the outcome remains open.
+Final user confirmation may happen after the response cutoff. Whether a final-confirmation timeout exists, its default length, and what happens at expiry remain open. If no willing group fits the current replies and known options, the interaction can report that no workable outcome was found for this attempt. This does not prove that no real-world plan exists, and the exact wording for the outcome remains open.
+
+A person who did not respond in time may request to join after the group confirms. The request does not reopen or change the existing plan. The proposed revised group must satisfy every member's conditions, and everyone in that group, including the joiner, must explicitly confirm the revised plan. The existing plan stays intact while the proposed addition is considered.
 
 A material change to the activity, time, estimated cost, or attendee list requires renewed confirmation from each remaining participant. Previous approvals apply to the plan those participants approved.
 
 ## Open decisions
 
-- Which people have final authority to select a group or plan, and how conflicting human choices are resolved
+- The selection method after invitations, including consensus or voting, tie handling, and the starter's role
 - How participants classify conditions as strict or flexible, and how flexible preferences are ranked or balanced fairly
-- How the candidate catalog and manual options appear and are represented
-- The default response cutoff length, final-confirmation window length, and reminder delivery
-- Late replies, late joining or reentry, and edits after the response cutoff
-- How to handle dropouts and changes after confirmation beyond renewed approval
+- How the candidate catalog, shared group page, and manual options appear and are represented
+- The default response cutoff length and reminder delivery
+- The default final-confirmation timeout and expiry behavior
+- How people submit late replies and join requests, and how reentry works
+- How to handle withdrawals or removals and changes after confirmation beyond renewed approval
 - Account, sign-in, participant identity, invite access, and privacy enforcement
 - Notifications and agent lifetime beyond an outing
 - How multi-person coordination is implemented, whether Cubbie integration is needed, and the technical design
