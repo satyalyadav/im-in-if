@@ -6,40 +6,46 @@ Planning a movie, dinner, or campus event with friends can fizzle during the bac
 
 At least one person must have sparked interest in doing something, but everyone else need not be initially interested or motivated. A plan may start from an incomplete suggestion such as "Dinner Friday?" before anyone chooses a restaurant, exact time, or budget. A useful outcome can be that no willing attendee set fits the current replies and known options. That does not prove that no real-world plan exists.
 
-## First build
+## First version
 
-The first version covers one local outing among existing student friends. The demo is a movie night. The broader concept includes movies, dinner, and campus events; trips are outside the first build.
+The first version covers one local outing among existing student friends. The demo is a movie night. The broader concept includes movies, dinner, and campus events; trips are outside this version.
 
 - Cubbie Hackathon Track 2
 - Build-time budget: 12 to 16 hours
 
 The first version uses a small catalog of candidate options with stated showtimes and prices. People can add options manually. Synthetic or sample entries must be labeled clearly. The catalog does not claim live discovery or verified ticket prices. Live discovery for movie showtimes, restaurants, and events is deferred.
 
-## Conditions and negotiation
+Each participant provides conditions and option rankings anew for each outing. Carrying these forward as memory is outside this version. Signing in does not imply reuse of earlier preferences. Whether earlier data are retained remains open.
+
+## Conditions, preferences, and negotiation
 
 The first version should account for availability, spending limits, activities a person wants or avoids, named-person attendance dependencies, and minimum group size. Strict limits are mandatory. An agent may compromise on a flexible preference, but only its owner may explicitly relax a strict limit. How participants classify conditions as strict or flexible remains undecided.
 
 If a condition's meaning or strictness is unclear, the agent asks its own user a focused question. Before negotiation, each agent shows its user a short, editable summary of its interpretation. The agent does not silently guess at strict limits.
 
-Participants may privately rank workable options, such as preferring a 7 PM movie while also accepting dinner. Their own agent uses those choices to negotiate and explain proposals. Participants provide conditions and rankings anew for each outing; carrying them across outings is outside the 12 to 16 hour version. Signing in does not imply that earlier preferences or rankings are reused. A ranking is not approval; every person included in a proposed plan must still explicitly confirm it. Whether earlier data are retained remains open.
+Participants may privately rank workable options, such as preferring a 7 PM movie while also accepting dinner. Their own agent uses those choices to negotiate and explain proposals. A ranking is not approval; everyone included in a proposed plan must still explicitly confirm it.
 
 A smaller willing group may proceed if each attendee's conditions hold. A person who does not attend does not automatically veto the others' plan. Attendance dependencies can be evaluated together against one proposed attendee set. Mutually dependent people do not need unconditional prior commitments, but each must explicitly confirm that same plan through their own agent. A missing named person may make another participant ineligible. For example, if Bob will attend only if Maya attends, Maya's absence can make Bob ineligible.
 
-Agents explain feasible options and tradeoffs in simple terms. The product does not impose an attendance-first choice. The starter may decide the initial direction, but everyone contacted about the plan should have a say afterward. When options tie, ask participants for additional input; the starter does not break the tie alone. The selection method, tie feedback, retries, what happens if the tie persists, and the starter's later role remain open.
+Agents explain feasible options and tradeoffs in simple terms. The product does not impose an attendance-first choice. The starter may decide the initial direction. Once invitees are admitted, everyone contacted about the plan should have a say in later choices. When options tie, each participant's own agent asks one short, private follow-up with A, B, or either. Agents use the answers to negotiate a candidate. If everyone answers either, the agents may suggest either option for explicit final confirmation. If no acceptable common option remains, report no agreement rather than repeat the same poll. The starter does not break a tie alone.
 
 Each agent asks its own user to approve the plan. The user makes the decision; the agent does not commit on the user's behalf. A confirmation covers the activity, time, estimated cost, and attendee list. Booking and payment are outside the first version.
 
 The intended sharing policy keeps each student's budget caps, other raw constraints, and personal reasons private to that student and their own agent. The shared group page displays brief offers and counteroffers using only approved details, along with the current proposal and its status. A shared update could say "7PM does not work for this group; how about 8?" without naming who objected or why. The page does not show private agent conversations, raw limits, or personal reasons. This describes the intended sharing policy, not a technical security guarantee. Offers and refusals may still reveal clues.
 
-## Chosen first-version interaction
+## Web app and invitations
 
-The first version is a web app. An initiator starts a plan and manually shares an invitation link in the friends' existing group chat. Friends open the invite and talk privately with their own personal agent for that outing. Each participant must sign in before private agent chat; an invitation link or typed name alone does not establish identity. The agents negotiate in the app, and people review and confirm the plan there. Participants do not install agents. Native iMessage or WhatsApp integration is not required.
+The first version is a web app. The starter begins a plan and manually shares an invitation link in the friends' existing group chat. Each participant signs in before private agent chat; a shared link or typed name alone does not establish identity. Each participant's private chat is only with their own agent. The agents negotiate in the app, and people review and confirm the plan there. Participants do not install agents. Native iMessage or WhatsApp integration is not required.
 
-For the demo, email approval notices are in scope. They should contain a short link back to the app, not private planning details. No email provider or sending behavior is specified or configured, and delivery is not guaranteed. Other notification channels are outside the hackathon scope.
+A signed-in invitee who opens the shared invitation link can request admission to the planning group. The starter approves or rejects each request. Until approved, a request is pending, and the invitee cannot see group details or participate in negotiation. Pending admission does not count as attendance or confirmation. Approval grants access to the planning group only; it does not add the person to the attendee list or confirm attendance. The starter receives an in-app notification for every admission request.
+
+A person who does not respond by the response cutoff may request admission later. When that timing is permitted remains open. Admission is separate from a post-confirmation join request to add someone to the attendee list.
+
+For the demo, email approval and admission notices are in scope only for recipients who have opted in. The app should record each recipient's opt-in before sending. Email notices should contain a short return-to-app link, not private planning details. The starter always receives an in-app notice for an admission request. No email provider or sending behavior is specified or configured, and delivery is not guaranteed. Other notification channels are outside the hackathon scope.
 
 ## Response cutoff and confirmation
 
-The initiator sets a response cutoff. A person who has not replied by the cutoff is not part of the current proposed group. This establishes only that they did not respond in time; their reason is unknown. It must not be interpreted as a decline, loss of interest, or unavailability.
+The starter sets a response cutoff. A person who has not replied by the cutoff is not part of the current proposed group. This establishes only that they did not respond in time; their reason is unknown. It must not be interpreted as a decline, loss of interest, or unavailability.
 
 After the cutoff, the process reassesses the willing attendee set against every remaining person's conditions, including strict limits and attendance dependencies. A missing named person can make another participant ineligible. Earlier approvals for a larger group do not transfer to the revised plan.
 
@@ -49,17 +55,27 @@ A person who did not respond in time may request to join after the group confirm
 
 A material change to the activity, time, estimated cost, or attendee list requires renewed confirmation from each remaining participant. Previous approvals apply to the plan those participants approved.
 
-## Open decisions
+## Product questions still open
 
-- The selection method after invitations, including consensus or voting, tie feedback UI, retries, what happens if a tie persists, and the starter's role
-- How participants classify conditions as strict or flexible, and how different participants' private rankings are reconciled fairly
-- How the candidate catalog, shared group page, and manual options appear and are represented
-- The default response cutoff length and any reminders for that cutoff
-- Whether users can change the 30-minute final-approval window, how its timing is anchored across participants, and how that setting is presented
-- What happens if an activity is due to start while final approval is pending
-- Whether to send final-approval reminders, their cadence and delivery, late approval after expiry or restart, and the disposition of an unconfirmed proposal
-- How people submit late replies and join requests, and how reentry works
-- How to handle withdrawals or removals and changes after confirmation beyond renewed approval
-- Identity provider and sign-in method, matching an account to an invited participant, how long earlier data are retained, invite access, and privacy enforcement
-- Email provider and sending behavior, and agent lifetime beyond an outing
-- How multi-person coordination is implemented, whether Cubbie integration is needed, and the technical design
+- How people select among candidates after everyone has had input, including whether to use consensus or voting, how conflicting private rankings are reconciled, and the starter's role; no majority or aggregation rule is set
+- The exact wording for an outcome where current replies and known options yield no willing attendee set
+- The exact presentation of the one-round A/B/either follow-up and how people resolve non-tie disagreements
+- How pending admission requests interact with the response cutoff and attendee set, and when late admission is allowed
+- What happens after a participant withdraws or is removed from a confirmed plan, whether and how they may reenter, and how later changes are handled beyond renewed approval
+- What to do if an activity is due to start while final approval is pending
+- Late approval after expiry or restart, and the disposition of an unconfirmed proposal
+- Whether the 30-minute final-approval window can be changed, and whether its clock is shared or starts separately for each request
+- Default response-cutoff length and reminder behavior
+- How and when people opt in to email notices, whether approval reminders are sent, and their cadence
+- Whether and how long to retain or delete earlier outing data
+- How long agents persist beyond an outing
+- The catalog and shared group page layout, and how admitted participants submit late replies and other requests
+
+## Build choices not selected
+
+- Sign-in and identity provider, and how a signed-in account matches an invited person
+- API, model, and email providers
+- Data store and deployment target
+- Plan versioning, timestamps, and any atomic handling of simultaneous approvals
+- Technical enforcement of admission, access, and privacy rules
+- Email sending and in-app notification implementation

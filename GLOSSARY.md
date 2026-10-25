@@ -10,6 +10,9 @@ A representative of one person in planning.
 **Participant**:
 A person considering joining a plan.
 
+**Starter**:
+The participant who begins a plan and may set its initial direction. Once invitees are admitted, they should have a say in later choices.
+
 **Plan**:
 A proposed social activity friends are considering together.
 
@@ -35,7 +38,7 @@ A condition linking one participant's attendance to a named person's attendance.
 A condition that sets the number of people needed for a participant to join.
 
 **Response cutoff**:
-An initiator-set time after which a person who has not replied is not part of the current proposed group. Their reason is unknown; final confirmation may happen afterward.
+A starter-set time after which a person who has not replied is not part of the current proposed group. Their reason is unknown; final confirmation may happen afterward.
 
 **Tentative agreement**:
 A plan the agents have negotiated that remains subject to approval by the people involved.
@@ -43,5 +46,8 @@ A plan the agents have negotiated that remains subject to approval by the people
 **Confirmation**:
 A participant's explicit approval of the activity, time, estimated cost, and attendee list. Their own agent asks for approval; silence does not count.
 
+**Admission request**:
+A signed-in invitee's request for the starter to admit them to the planning group. Until approved, they cannot see group details or join negotiation; admission alone does not make them an attendee or confirm attendance.
+
 **Join request**:
-A request from someone outside a confirmed attendee group to join it. It does not change the existing plan; everyone in the proposed revised group must meet their conditions and explicitly approve it.
+A request by an admitted planning-group participant to add themself to the attendee list of a confirmed plan, separate from an admission request. It leaves the existing plan unchanged until everyone in the proposed revised group meets their conditions and explicitly approves it.
