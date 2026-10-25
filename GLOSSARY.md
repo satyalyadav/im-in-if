@@ -46,6 +46,9 @@ A plan the agents have negotiated that remains subject to approval by the people
 **Confirmation**:
 A participant's explicit approval of the activity, time, estimated cost, and attendee list. Their own agent asks for approval; silence does not count.
 
+**Final approval deadline**:
+The shared deadline for everyone included in a proposal to confirm it. It is 30 minutes after the approval request is published, or the activity start if sooner. Opening a page or delayed email does not reset it.
+
 **Admission request**:
 A signed-in invitee's request for the starter to admit them to the planning group. Until approved, they cannot see group details or join negotiation; admission alone does not make them an attendee or confirm attendance.
 

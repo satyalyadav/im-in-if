@@ -20,7 +20,7 @@ Each participant provides conditions and option rankings anew for each outing. C
 
 ## Conditions, preferences, and negotiation
 
-The first version should account for availability, spending limits, activities a person wants or avoids, named-person attendance dependencies, and minimum group size. Strict limits are mandatory. An agent may compromise on a flexible preference, but only its owner may explicitly relax a strict limit. How participants classify conditions as strict or flexible remains undecided.
+The first version should account for availability, spending limits, activities a person wants or avoids, named-person attendance dependencies, and minimum group size. Strict limits are mandatory. An agent may compromise on a flexible preference, but only its owner may explicitly relax a strict limit.
 
 If a condition's meaning or strictness is unclear, the agent asks its own user a focused question. Before negotiation, each agent shows its user a short, editable summary of its interpretation. The agent does not silently guess at strict limits.
 
@@ -40,7 +40,7 @@ The first version is a web app. The starter begins a plan and manually shares an
 
 A signed-in invitee who opens the shared invitation link can request admission to the planning group. The starter approves or rejects each request. Until approved, a request is pending, and the invitee cannot see group details or participate in negotiation. Pending admission does not count as attendance or confirmation. Approval grants access to the planning group only; it does not add the person to the attendee list or confirm attendance. The starter receives an in-app notification for every admission request.
 
-A person who does not respond by the response cutoff may request admission later. When that timing is permitted remains open. Admission is separate from a post-confirmation join request to add someone to the attendee list.
+A pending admission request does not count as attendance or extend the response cutoff. A late nonresponder may request admission, but admission alone does not include them in the current proposal. After the current group confirms, an admitted person may submit a separate join request to be added to the attendee list. That request leaves the confirmed plan intact until everyone in the revised attendee group, including the joiner, has explicitly approved the revised plan.
 
 For the demo, email approval and admission notices are in scope only for recipients who have opted in. The app should record each recipient's opt-in before sending. Email notices should contain a short return-to-app link, not private planning details. The starter always receives an in-app notice for an admission request. The approved sender approach uses a subdomain of an existing domain; no domain purchase or DNS change has been made. The email provider, DNS write access, and sender verification remain unconfirmed, and delivery is not guaranteed. Other notification channels are outside the hackathon scope.
 
@@ -50,32 +50,26 @@ The starter sets a response cutoff. A person who has not replied by the cutoff i
 
 After the cutoff, the process reassesses the willing attendee set against every remaining person's conditions, including strict limits and attendance dependencies. A missing named person can make another participant ineligible. Earlier approvals for a larger group do not transfer to the revised plan.
 
-Final approval is separate from the response cutoff. After conditions have been gathered and a proposed attendee set is ready, each person's own agent asks them to approve the exact activity, time, estimated cost, and attendee list. The default final-approval window is 30 minutes after final approval is requested. If any user does not approve before expiry, the proposal is not confirmed. Silence is not approval. Expiry does not automatically remove that person or reshuffle the group, and an agent does not commit for its user.
+Final approval is separate from the response cutoff. After conditions have been gathered and a proposed attendee set is ready, each person's own agent asks them to approve the exact activity, time, estimated cost, and attendee list. One shared deadline applies to everyone included in the proposal. It is 30 minutes after the approval request is published, or the activity start if that comes sooner. Opening the page or receiving a delayed email does not reset the deadline. If any included person has not approved by then, the proposal expires unconfirmed. Silence is not approval, and expiry does not automatically remove anyone or reshuffle the group.
 
-A person who did not respond in time may request to join after the group confirms. The request does not reopen or change the existing plan. The proposed revised group must satisfy every member's conditions, and everyone in that group, including the joiner, must explicitly confirm the revised plan. The existing plan stays intact while the proposed addition is considered.
+After expiry, an admitted participant must explicitly request a restart. Each included person must approve the restarted proposal; earlier approvals do not carry over. Agents do not restart a proposal automatically or repeatedly. An agent asks only its own user for approval, and it never commits for them.
+
+If someone leaves a confirmed attendee group, that changes the attendee list. The remaining group must still meet its conditions, and every person in the revised group must explicitly confirm the revised plan. The previous full-group confirmation does not cover the new attendee list.
 
 A material change to the activity, time, estimated cost, or attendee list requires renewed confirmation from each remaining participant. Previous approvals apply to the plan those participants approved.
 
 ## Product questions still open
 
-- How people select among candidates after everyone has had input, including whether to use consensus or voting, how conflicting private rankings are reconciled, and the starter's role; no majority or aggregation rule is set
-- The exact wording for an outcome where current replies and known options yield no willing attendee set
-- The exact presentation of the one-round A/B/either follow-up and how people resolve non-tie disagreements
-- How pending admission requests interact with the response cutoff and attendee set, and when late admission is allowed
-- What happens after a participant withdraws or is removed from a confirmed plan, whether and how they may reenter, and how later changes are handled beyond renewed approval
-- What to do if an activity is due to start while final approval is pending
-- Late approval after expiry or restart, and the disposition of an unconfirmed proposal
-- Whether the 30-minute final-approval window can be changed, and whether its clock is shared or starts separately for each request
-- Default response-cutoff length and reminder behavior
-- How and when people opt in to email notices, whether approval reminders are sent, and their cadence
+- How people express a choice among multiple workable options when preferences conflict beyond the single A/B/either tie follow-up; no vote, majority, maximum-attendance rule, or starter tie-break is set
+- The default response-cutoff length
+- Whether to send reminder emails, and if so, their timing
 - How long to retain plan, offer, decision, and shared-feed data after private chats, conditions, and rankings are deleted
 - How long agents persist beyond an outing
-- The catalog and shared group page layout, and how admitted participants submit late replies and other requests
 
 ## Build choices not selected
 
 - Sign-in and identity provider, and how a signed-in account matches an invited person
-- API, model, and email providers
+- Exact AI model, email provider, and application credential setup; ASU is the recommended API candidate, conditional on zero incremental cost and model compatibility
 - Data store and deployment target
 - Plan versioning, timestamps, and any atomic handling of simultaneous approvals
 - Technical enforcement of admission, access, and privacy rules
