@@ -20,18 +20,11 @@ export type AgentErrorCode =
   | "usage_not_included"
   | "unavailable";
 
-export type AgentOutputDiagnostic = {
-  stage: "malformed_json" | "schema_validation";
-  finishReason: string;
-  issues?: Array<{ path: string; code: string }>;
-};
-
 export class AgentError extends Error {
   constructor(
     readonly code: AgentErrorCode,
     message: string = code,
     options?: ErrorOptions,
-    readonly outputDiagnostic?: AgentOutputDiagnostic,
   ) {
     super(message, options);
     this.name = "AgentError";
@@ -113,6 +106,94 @@ export const ACTIVE_GO_MODEL = "deepseek-v4.1-flash";
 
 const OfferSchema = OfferCandidateSchema;
 
+const AgentReplyPromptSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  additionalProperties: false,
+  required: ["text", "conditionUpdate"],
+  properties: {
+    text: { type: "string", minLength: 1, maxLength: 12_000 },
+    conditionUpdate: {
+      anyOf: [
+        { type: "null" },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["hard", "flexiblePreferences", "clarifyingQuestions"],
+          properties: {
+            hard: {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "availableWindows", "maxCostCents", "requiredActivityTags", "avoidedActivityTags",
+                "attendanceDependencyNames", "minimumGroupSize",
+              ],
+              properties: {
+                availableWindows: {
+                  type: "array",
+                  maxItems: 12,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["startsAt", "endsAt"],
+                    properties: {
+                      startsAt: { type: "string", format: "date-time" },
+                      endsAt: { type: "string", format: "date-time" },
+                    },
+                  },
+                },
+                maxCostCents: {
+                  anyOf: [
+                    { type: "integer", minimum: 0, maximum: 100_000 },
+                    { type: "null" },
+                  ],
+                },
+                requiredActivityTags: {
+                  type: "array", maxItems: 12,
+                  items: { type: "string", minLength: 1, maxLength: 40 },
+                },
+                avoidedActivityTags: {
+                  type: "array", maxItems: 12,
+                  items: { type: "string", minLength: 1, maxLength: 40 },
+                },
+                attendanceDependencyNames: {
+                  type: "array", maxItems: 20,
+                  items: { type: "string", minLength: 1, maxLength: 128 },
+                },
+                minimumGroupSize: { type: "integer", minimum: 1, maximum: 20 },
+              },
+            },
+            flexiblePreferences: {
+              type: "array", maxItems: 12,
+              items: { type: "string", minLength: 1, maxLength: 160 },
+            },
+            clarifyingQuestions: {
+              type: "array", maxItems: 4,
+              items: { type: "string", minLength: 1, maxLength: 240 },
+            },
+          },
+        },
+      ],
+    },
+  },
+} as const;
+
+const EmptyConditionReplyExample = {
+  text: "I've noted that.",
+  conditionUpdate: {
+    hard: {
+      availableWindows: [],
+      maxCostCents: null,
+      requiredActivityTags: [],
+      avoidedActivityTags: [],
+      attendanceDependencyNames: [],
+      minimumGroupSize: 1,
+    },
+    flexiblePreferences: [],
+    clarifyingQuestions: [],
+  },
+};
+
 function systemPrompt(input: AgentTurnInput): string {
   const cutoff = formatZonedDateTime(
     new Date(input.outing.cutoffAt),
@@ -125,8 +206,13 @@ function systemPrompt(input: AgentTurnInput): string {
     `Response cutoff: ${cutoff}.`,
     "Gather and maintain only your owner's conditions in this private conversation.",
     "Use only the owner's messages, the current condition state below, and the admitted public roster below.",
-    "Return exactly one JSON object with keys text and conditionUpdate. text is a concise plain-language reply. conditionUpdate is null when this message adds or corrects no condition; otherwise include the complete updated condition state.",
-    "The conditionUpdate object has hard.availableWindows (start and end ISO timestamps), hard.maxCostCents (integer or null), hard.requiredActivityTags, hard.avoidedActivityTags, hard.attendanceDependencyNames (exact admitted display names), hard.minimumGroupSize, flexiblePreferences, and clarifyingQuestions.",
+    "Return one JSON instance matching this complete schema exactly. Do not omit required fields, use null for array fields, or add fields:",
+    JSON.stringify(AgentReplyPromptSchema),
+    "Complete example shape when there are no hard limits, flexible preferences, or questions yet (example values do not override saved owner conditions):",
+    JSON.stringify(EmptyConditionReplyExample),
+    "text is a concise plain-language reply. Set conditionUpdate to null only when this message adds or corrects no condition. Otherwise return the complete condition state, including every required field, and copy unchanged values from the current saved state.",
+    "Use [] for empty availableWindows, requiredActivityTags, avoidedActivityTags, attendanceDependencyNames, flexiblePreferences, and clarifyingQuestions. Use maxCostCents:null only when there is no saved or newly stated hard spending cap. Use ISO date-time strings with a timezone offset or Z for each window's startsAt and endsAt; these are the only window keys.",
+    "minimumGroupSize must be an integer from 1 through 20. Use 1 only when the owner has not stated a minimum and there is no saved minimum; preserve any saved minimum on later updates. flexiblePreferences and clarifyingQuestions are always arrays of strings, including when empty.",
     "Preserve every saved hard condition across turns. Never weaken or remove one unless the owner explicitly asks for that change. A generic thanks, off-topic message, or answer that does not resolve the question must not change conditions or count as confirmation.",
     "Treat only limits the owner states as required as hard. Put ordinary likes and tradeoffs in flexiblePreferences.",
     "Ask one focused question when the amount, date, time, strictness, or person is unclear. Do not guess missing dates or time zones. Use the outing time zone for relative times. Keep unresolved questions in clarifyingQuestions and leave the related condition unchanged.",
@@ -177,40 +263,7 @@ function findAgentError(error: unknown): AgentError | null {
   return null;
 }
 
-const SAFE_ISSUE_PATH_SEGMENTS = new Set([
-  "text", "conditionUpdate", "hard", "availableWindows", "startsAt", "endsAt",
-  "maxCostCents", "requiredActivityTags", "avoidedActivityTags", "attendanceDependencyNames",
-  "minimumGroupSize", "flexiblePreferences", "clarifyingQuestions", "optionId", "activity",
-  "estimatedCostCents", "activityTags", "attendeeUserIds", "counterOfferToId", "privateNote",
-]);
-const SAFE_ISSUE_CODES = new Set([
-  "custom", "invalid_element", "invalid_format", "invalid_key", "invalid_type",
-  "invalid_union", "invalid_value", "not_multiple_of", "too_big", "too_small",
-  "unrecognized_keys",
-]);
-const SAFE_FINISH_REASONS = new Set([
-  "stop", "length", "content-filter", "tool-calls", "error", "other", "unknown",
-]);
-
-function safeOutputIssuePath(path: PropertyKey[]): string {
-  if (path.length === 0) return "$";
-  return path.map((segment) => {
-    if (typeof segment === "string" && SAFE_ISSUE_PATH_SEGMENTS.has(segment)) return segment;
-    if (typeof segment === "number") return "[]";
-    return "?";
-  }).join(".");
-}
-
-function safeOutputIssueCode(code: string): string {
-  return SAFE_ISSUE_CODES.has(code) ? code : "other";
-}
-
-function safeFinishReason(reason: unknown): string {
-  if (typeof reason !== "string") return "unavailable";
-  return SAFE_FINISH_REASONS.has(reason) ? reason : "other";
-}
-
-function normalizedJson<T>(text: string, schema: z.ZodType<T>, finishReason?: unknown): T {
+function normalizedJson<T>(text: string, schema: z.ZodType<T>): T {
   let trimmed = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
   if (!trimmed) {
     throw new AgentError("empty_reply", "model returned no text");
@@ -226,22 +279,13 @@ function normalizedJson<T>(text: string, schema: z.ZodType<T>, finishReason?: un
   } catch (error) {
     throw new AgentError("invalid_output", "model returned invalid structured output", {
       cause: error,
-    }, { stage: "malformed_json", finishReason: safeFinishReason(finishReason) });
+    });
   }
   const result = schema.safeParse(parsed);
   if (!result.success) {
     throw new AgentError(
       "invalid_output",
       JSON.stringify(result.error.issues.map((issue) => issue.path.join("."))),
-      undefined,
-      {
-        stage: "schema_validation",
-        finishReason: safeFinishReason(finishReason),
-        issues: result.error.issues.slice(0, 12).map((issue) => ({
-          path: safeOutputIssuePath(issue.path),
-          code: safeOutputIssueCode(issue.code),
-        })),
-      },
     );
   }
   return result.data;
@@ -347,7 +391,7 @@ function createAgent(options: ProviderOptions): Agent {
         maxRetries: 0,
         maxOutputTokens: 4000,
       });
-      return normalizedJson(result.text, schema, result.finishReason);
+      return normalizedJson(result.text, schema);
     } catch (error) {
       const providerError = findAgentError(error);
       if (providerError) throw providerError;
@@ -372,7 +416,7 @@ function createAgent(options: ProviderOptions): Agent {
           maxRetries: 0,
           maxOutputTokens: 4000,
         });
-        return normalizedJson(result.text, AgentReplySchema, result.finishReason);
+        return normalizedJson(result.text, AgentReplySchema);
       } catch (error) {
         const providerError = findAgentError(error);
         if (providerError) throw providerError;

@@ -121,6 +121,61 @@ describe("OpenCode Go agent boundary", () => {
     expect(JSON.stringify(captured[0].body)).toContain("conditionUpdate");
   });
 
+  it("sends the complete required condition-output schema in the captured request", async () => {
+    const { baseURL, captured } = await fakeGo((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(completion(JSON.stringify({ text: "What time works?", conditionUpdate: null }), {
+        prompt_tokens: 1,
+        completion_tokens: 1,
+        total_tokens: 2,
+        opencode: { billing_source: "go" },
+        cost: 0,
+      }));
+    });
+
+    await agent(baseURL).reply(turnInput());
+    const messages = captured[0].body.messages as Array<{ role?: string; content?: unknown }>;
+    const prompt = String(messages.find((message) => message.role === "system")?.content ?? "");
+    expect(prompt).toContain('"required":["text","conditionUpdate"]');
+    expect(prompt).toContain('"minimumGroupSize":{"type":"integer","minimum":1,"maximum":20}');
+    expect(prompt).toContain('"flexiblePreferences":{"type":"array","maxItems":12');
+    expect(prompt).toContain('"clarifyingQuestions":{"type":"array","maxItems":4');
+    expect(prompt).toContain('"startsAt":{"type":"string","format":"date-time"}');
+    expect(prompt).toContain('"attendanceDependencyNames":[],"minimumGroupSize":1');
+    expect(prompt).toContain("copy unchanged values from the current saved state");
+  });
+
+  it("fails closed when mandatory condition fields have malformed types", async () => {
+    const malformed = {
+      text: "I saved those conditions.",
+      conditionUpdate: {
+        hard: {
+          availableWindows: [],
+          maxCostCents: null,
+          requiredActivityTags: [],
+          avoidedActivityTags: [],
+          attendanceDependencyNames: [],
+          minimumGroupSize: "1",
+        },
+        flexiblePreferences: null,
+        clarifyingQuestions: [],
+      },
+    };
+    const { baseURL } = await fakeGo((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(completion(JSON.stringify(malformed), {
+        prompt_tokens: 1,
+        completion_tokens: 1,
+        total_tokens: 2,
+        opencode: { billing_source: "go" },
+        cost: 0,
+      }));
+    });
+
+    await expect(agent(baseURL).reply(turnInput()))
+      .rejects.toMatchObject({ code: "invalid_output" } satisfies Partial<AgentError>);
+  });
+
   it.each([
     ["missing usage", undefined],
     ["missing billing source", { cost: 0 }],
