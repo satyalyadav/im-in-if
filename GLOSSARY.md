@@ -16,6 +16,12 @@ The participant who begins a plan and may set its initial direction. Once invite
 **Plan**:
 A proposed social activity friends are considering together.
 
+**Outing**:
+One social plan a starter begins, together with the private chats attached to it. Conditions and agent memory do not carry over from another outing.
+
+**Private chat**:
+The saved conversation between one participant and their own personal agent, scoped to one outing and visible only to that participant.
+
 **Initial interest**:
 A signal from at least one person that they are interested in doing something. Other people do not need to be interested yet.
 

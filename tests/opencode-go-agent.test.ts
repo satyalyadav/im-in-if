@@ -1,0 +1,131 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterEach, describe, expect, it } from "vitest";
+import { AgentError, ACTIVE_GO_MODEL, createOpenCodeGoAgent } from "@/lib/agent";
+
+type Captured = {
+  body: Record<string, unknown>;
+  userAgent: string | undefined;
+  session: string | undefined;
+};
+
+type Handler = (request: IncomingMessage, response: ServerResponse) => void;
+const servers: Server[] = [];
+
+async function fakeGo(handler: Handler): Promise<{ baseURL: string; captured: Captured[] }> {
+  const captured: Captured[] = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      captured.push({
+        body: JSON.parse(body) as Record<string, unknown>,
+        userAgent: Array.isArray(request.headers["user-agent"])
+          ? request.headers["user-agent"][0]
+          : request.headers["user-agent"],
+        session: Array.isArray(request.headers["x-opencode-session"])
+          ? request.headers["x-opencode-session"][0]
+          : request.headers["x-opencode-session"],
+      });
+      handler(request, response);
+    });
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return { baseURL: `http://127.0.0.1:${port}/v1`, captured };
+}
+
+function completion(content: string, usage?: unknown): string {
+  return JSON.stringify({
+    id: "chatcmpl-test",
+    object: "chat.completion",
+    created: 1,
+    model: ACTIVE_GO_MODEL,
+    choices: [
+      { index: 0, message: { role: "assistant", content }, finish_reason: "stop" },
+    ],
+    ...(usage === undefined ? {} : { usage }),
+  });
+}
+
+function agent(baseURL: string) {
+  return createOpenCodeGoAgent({
+    baseURL,
+    apiKey: "synthetic-test-key",
+    model: ACTIVE_GO_MODEL,
+    timeoutMs: 5_000,
+  });
+}
+
+const outing = {
+  suggestion: "Synthetic dinner plan",
+  cutoffAt: "2026-11-01T02:30:00.000Z",
+  cutoffTimeZone: "America/Phoenix",
+};
+
+afterEach(async () => {
+  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => {
+    server.closeAllConnections();
+    server.close(() => resolve());
+  })));
+});
+
+describe("OpenCode Go agent boundary", () => {
+  it("pins DeepSeek, uses an honest app identity and stable session, and accepts explicit zero-cost metadata", async () => {
+    const { baseURL, captured } = await fakeGo((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(completion("Compare two synthetic times.", {
+        prompt_tokens: 1,
+        completion_tokens: 1,
+        total_tokens: 2,
+        opencode: { billing_source: "go" },
+        cost: 0,
+      }));
+    });
+    const result = await agent(baseURL).reply({
+      outing,
+      history: [{ role: "user", content: "Synthetic private input" }],
+      sessionId: "ses_synthetic-conversation-1",
+    });
+
+    expect(result.text).toBe("Compare two synthetic times.");
+    expect(captured).toHaveLength(1);
+    expect(captured[0].body.model).toBe("deepseek-v4.1-flash");
+    expect(captured[0].session).toBe("ses_synthetic-conversation-1");
+    expect(captured[0].userAgent).toBe("im-in-if/0.1.0");
+    expect(JSON.stringify(captured[0].body)).toContain("Synthetic private input");
+  });
+
+  it.each([
+    ["missing usage", undefined],
+    ["missing billing source", { cost: 0 }],
+    ["missing cost", { opencode: { billing_source: "go" } }],
+    ["paid billing source", { opencode: { billing_source: "payg" }, cost: 0 }],
+    ["nonzero cost", { opencode: { billing_source: "go" }, cost: 0.0001 }],
+    ["malformed cost", { opencode: { billing_source: "go" }, cost: "0" }],
+    ["conflicting cost fields", { opencode: { billing_source: "go-plus" }, cost: 0, cost0: 1 }],
+  ])("rejects successful responses with %s", async (_name, usage) => {
+    const { baseURL } = await fakeGo((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(completion("Synthetic response", usage));
+    });
+    await expect(agent(baseURL).reply({
+      outing,
+      history: [{ role: "user", content: "Synthetic only" }],
+      sessionId: "ses_synthetic-guard-check",
+    })).rejects.toMatchObject({ code: "usage_not_included" });
+  });
+
+  it("rejects malformed successful response bodies", async () => {
+    const { baseURL } = await fakeGo((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("not-json");
+    });
+    await expect(agent(baseURL).reply({
+      outing,
+      history: [{ role: "user", content: "Synthetic only" }],
+      sessionId: "ses_synthetic-malformed-check",
+    })).rejects.toMatchObject({ code: "usage_not_included" } satisfies Partial<AgentError>);
+  });
+});
