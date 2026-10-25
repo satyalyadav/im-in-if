@@ -871,17 +871,40 @@ async function saveConditions(
   ) {
     return api(400, { error: "invalid_attendance_dependency" });
   }
-  await context.db.query(
-    `insert into participant_preferences
-      (outing_id, user_id, private_input, interpretation, interpretation_ready, conditions_version, updated_at)
-     values ($1, $2, '', $3::jsonb, true, 1, now())
-     on conflict (outing_id, user_id) do update
-       set interpretation = excluded.interpretation,
-           interpretation_ready = true,
-           conditions_version = participant_preferences.conditions_version + 1,
-           updated_at = now()`,
-    [outingId, context.userId, JSON.stringify(parsed.data)],
+  const outingRows = await context.db.query<{ ended_at: string | Date | null }>(
+    `select ended_at from outings where id = $1`,
+    [outingId],
   );
+  if (!outingRows[0] || outingRows[0].ended_at) return api(409, { error: "outing_ended" });
+  const written = await context.db.transaction<{ user_id: string }>([
+    {
+      text: `select id from outings where id = $1 and ended_at is null for update`,
+      params: [outingId],
+    },
+    {
+      text: `insert into participant_preferences
+        (outing_id, user_id, private_input, interpretation, interpretation_ready, conditions_version, updated_at)
+       select $1, $2, '', $3::jsonb, true, 1, now()
+        where not exists (
+          select 1 from proposals p
+           where p.outing_id = $1 and p.status = 'confirmed'
+             and p.attendee_user_ids @> jsonb_build_array($2::text)
+        )
+       on conflict (outing_id, user_id) do update
+         set interpretation = excluded.interpretation,
+             interpretation_ready = true,
+             conditions_version = participant_preferences.conditions_version + 1,
+             updated_at = now()
+         where not exists (
+           select 1 from proposals p
+            where p.outing_id = $1 and p.status = 'confirmed'
+              and p.attendee_user_ids @> jsonb_build_array($2::text)
+         )
+       returning user_id`,
+      params: [outingId, context.userId, JSON.stringify(parsed.data)],
+    },
+  ]);
+  if (!written[1]?.length) return api(409, { error: "confirmed_conditions_locked" });
   await invalidatePublishedProposals(context.db, outingId);
   return api(200, { ready: true });
 }
@@ -1662,6 +1685,9 @@ async function restartProposal(
     privateNote: "",
   };
   const owner = attendeeUserIds[0];
+  if (!(await tieAllowsCandidate(context.db, outing.id, expired.option_id, attendeeUserIds))) {
+    return api(409, { error: "tie_choice_required" });
+  }
   const eligibility = await validateCandidateForOption(context.db, outing.id, candidate, owner);
   if (!eligibility.ok) return api(409, { error: "offer_not_feasible" });
   if (new Date(candidate.startsAt) <= new Date()) return api(409, { error: "activity_already_started" });
@@ -2028,73 +2054,59 @@ async function beginDepartureRenegotiation(
   departureRequestId: string,
   departingUserId: string,
 ): Promise<boolean> {
-  await db.transaction([
-    {
-      text: `select id from outings where id = $1 and ended_at is null for update`,
-      params: [outingId],
-    },
-    {
-      text: `update proposals set status = 'superseded'
+  const rows = await db.query<{ accepted: number; outing_updated: number }>(
+    `with locked as materialized (
+       select id from outings where id = $2::uuid and ended_at is null for update
+     ), changed as (
+       update proposals set status = 'superseded'
         where id = $1::uuid and outing_id = $2::uuid and status = 'confirmed'
-        returning id`,
-      params: [confirmedProposalId, outingId],
-    },
-    {
-      text: `update departure_requests set status = 'accepted', proposal_id = null
-        where id = $1::uuid and outing_id = $2::uuid and status = 'pending'
-          and exists (select 1 from proposals where id = $3::uuid and outing_id = $2::uuid and status = 'superseded')
-        returning id`,
-      params: [departureRequestId, outingId, confirmedProposalId],
-    },
-    {
-      text: `update outings set status = 'planning'
-        where id = $1::uuid and status = 'confirmed' and ended_at is null
-          and exists (select 1 from proposals where id = $2::uuid and outing_id = $1::uuid and status = 'superseded')`,
-      params: [outingId, confirmedProposalId],
-    },
-    {
-      text: `update participants set response_status = 'not_interested', responded_at = now()
-        where outing_id = $1::uuid and user_id = $2 and admission_status = 'admitted'
-          and exists (select 1 from proposals where id = $3 and outing_id = $1 and status = 'superseded')`,
-      params: [outingId, departingUserId, confirmedProposalId],
-    },
-    {
-      text: `update proposals set status = 'expired'
-        where outing_id = $1::uuid and status = 'published'
-          and exists (select 1 from proposals where id = $2::uuid and outing_id = $1::uuid and status = 'superseded')`,
-      params: [outingId, confirmedProposalId],
-    },
-    {
-      text: `update join_requests set status = 'expired'
-        where outing_id = $1::uuid and status in ('pending', 'proposed')
-          and exists (select 1 from proposals where id = $2::uuid and outing_id = $1::uuid and status = 'superseded')`,
-      params: [outingId, confirmedProposalId],
-    },
-    {
-      text: `update tie_polls set status = 'no_agreement', resolved_at = coalesce(resolved_at, now())
-        where outing_id = $1::uuid and status = 'open'
-          and exists (select 1 from proposals where id = $2::uuid and outing_id = $1::uuid and status = 'superseded')`,
-      params: [outingId, confirmedProposalId],
-    },
-    {
-      text: `insert into in_app_notifications (id, outing_id, recipient_user_id, actor_user_id, kind, event_key)
-       select gen_random_uuid(), p.outing_id, attendee.user_id, $3, 'proposal_ready',
-              'renegotiation:' || $2::text
-         from proposals p
-         cross join lateral jsonb_array_elements_text(p.attendee_user_ids) attendee(user_id)
-        where p.id = $2::uuid and p.outing_id = $1::uuid and attendee.user_id <> $3
-       on conflict do nothing`,
-      params: [outingId, confirmedProposalId, departingUserId],
-    },
-  ]);
-  const check = await db.query<{ departure_status: string; outing_status: string }>(
-    `select d.status as departure_status, o.status as outing_status
-       from outings o
-       join departure_requests d on d.outing_id = o.id and d.id = $1::uuid
-      where o.id = $2::uuid`,
-    [departureRequestId, outingId],
+          and exists (select 1 from locked)
+        returning id, attendee_user_ids
+     ), accepted as (
+       update departure_requests set status = 'accepted', proposal_id = null
+        where id = $3::uuid and outing_id = $2::uuid and status = 'pending'
+          and exists (select 1 from changed)
+        returning id
+     ), outing_update as (
+       update outings set status = 'planning'
+        where id = $2::uuid and status = 'confirmed' and ended_at is null
+          and exists (select 1 from changed)
+        returning id
+     ), participant_update as (
+       update participants set response_status = 'not_interested', responded_at = now()
+        where outing_id = $2::uuid and user_id = $4 and admission_status = 'admitted'
+          and exists (select 1 from changed)
+        returning user_id
+     ), expired_proposals as (
+       update proposals set status = 'expired'
+        where outing_id = $2::uuid and status = 'published'
+          and exists (select 1 from changed)
+        returning id
+     ), expired_joins as (
+       update join_requests set status = 'expired'
+        where outing_id = $2::uuid and status in ('pending', 'proposed')
+          and exists (select 1 from changed)
+        returning id
+     ), closed_polls as (
+       update tie_polls set status = 'no_agreement', resolved_at = coalesce(resolved_at, now())
+        where outing_id = $2::uuid and status in ('open', 'resolved')
+          and exists (select 1 from changed)
+        returning id
+     ), notices as (
+       insert into in_app_notifications (id, outing_id, recipient_user_id, actor_user_id, kind, event_key)
+       select gen_random_uuid(), $2::uuid, attendee.user_id, $4, 'proposal_ready',
+              'renegotiation:' || $1::text
+         from changed
+         cross join lateral jsonb_array_elements_text(changed.attendee_user_ids) attendee(user_id)
+        where attendee.user_id <> $4
+       on conflict do nothing
+       returning id
+     )
+     select (select count(*)::int from accepted) as accepted,
+            (select count(*)::int from outing_update) as outing_updated`,
+    [confirmedProposalId, outingId, departureRequestId, departingUserId],
   );
-  return check[0]?.departure_status === "accepted" && check[0]?.outing_status === "planning";
+  return rows[0]?.accepted === 1 && rows[0]?.outing_updated === 1;
 }
 
 async function endOuting(context: OwnerContext, outing: LoadedOuting): Promise<ApiResponse> {
@@ -2117,16 +2129,6 @@ async function declareNoAgreement(context: OwnerContext, outing: LoadedOuting): 
             select 1 from participants member where member.outing_id = o.id
               and member.user_id = $2 and member.admission_status = 'admitted'
               and member.response_status = 'interested'
-          )
-          and (
-            not exists (select 1 from proposals p where p.outing_id = o.id)
-            or exists (
-              select 1 from proposals latest
-               where latest.outing_id = o.id
-                 and latest.revision = (select max(previous.revision) from proposals previous where previous.outing_id = o.id)
-                 and latest.status = 'expired'
-                 and latest.attendee_user_ids @> jsonb_build_array($2::text)
-            )
           )
           and not exists (
             select 1 from proposals p where p.outing_id = o.id

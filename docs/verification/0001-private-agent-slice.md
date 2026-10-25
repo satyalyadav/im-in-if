@@ -61,7 +61,7 @@ This verifies that app-accessible historical restoration is disabled under the t
 
 ### Source checks
 
-- `npx vitest run` with `maxWorkers: 1`: 51 of 51 tests passed on 2026-10-25.
+- `npx vitest run` with `maxWorkers: 1`: 52 of 52 tests passed on 2026-10-25.
 - `npm run typecheck`: passed.
 - `AUTH_MODE=local npm run build`: passed.
 

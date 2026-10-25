@@ -288,6 +288,14 @@ begin
       add column if not exists conditions_version integer not null default 0;
     alter table proposals
       add column if not exists condition_versions jsonb not null default '{}'::jsonb;
+    with ranked as (
+      select id, row_number() over (partition by outing_id order by created_at, id) as rn
+        from tie_polls where status = 'open'
+    )
+    update tie_polls t
+       set status = 'no_agreement', resolved_at = coalesce(t.resolved_at, now())
+      from ranked r
+     where t.id = r.id and r.rn > 1;
     create unique index if not exists tie_polls_one_open_idx
       on tie_polls (outing_id) where status = 'open';
     insert into schema_migrations (version) values (3);
