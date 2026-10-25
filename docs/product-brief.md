@@ -37,9 +37,9 @@ The first version is a web app. An initiator starts a plan and manually shares a
 
 The initiator sets a response cutoff. A person who has not replied by the cutoff is not part of the current proposed group. This establishes only that they did not respond in time; their reason is unknown. It must not be interpreted as a decline, loss of interest, or unavailability.
 
-After the cutoff, the process reassesses the willing attendee set against every remaining person's conditions, including strict limits and attendance dependencies. A missing named person can make another participant ineligible. Each remaining person's own agent asks them to explicitly confirm the revised activity, time, estimated cost, and attendee list. Earlier approvals for a larger group do not transfer to the revised plan. An agent cannot commit for its user, and silence is not approval.
+After the cutoff, the process reassesses the willing attendee set against every remaining person's conditions, including strict limits and attendance dependencies. A missing named person can make another participant ineligible. Earlier approvals for a larger group do not transfer to the revised plan.
 
-Final user confirmation may happen after the response cutoff. Whether a final-confirmation timeout exists, its default length, and what happens at expiry remain open. If no willing group fits the current replies and known options, the interaction can report that no workable outcome was found for this attempt. This does not prove that no real-world plan exists, and the exact wording for the outcome remains open.
+Final approval is separate from the response cutoff. After conditions have been gathered and a proposed attendee set is ready, each person's own agent asks them to approve the exact activity, time, estimated cost, and attendee list. The default final-approval window is 30 minutes from each user's request. If any user does not approve before expiry, the proposal is not confirmed. Silence is not approval. Expiry does not automatically remove that person or reshuffle the group, and an agent does not commit for its user.
 
 A person who did not respond in time may request to join after the group confirms. The request does not reopen or change the existing plan. The proposed revised group must satisfy every member's conditions, and everyone in that group, including the joiner, must explicitly confirm the revised plan. The existing plan stays intact while the proposed addition is considered.
 
@@ -50,8 +50,10 @@ A material change to the activity, time, estimated cost, or attendee list requir
 - The selection method after invitations, including consensus or voting, tie handling, and the starter's role
 - How participants classify conditions as strict or flexible, and how flexible preferences are ranked or balanced fairly
 - How the candidate catalog, shared group page, and manual options appear and are represented
-- The default response cutoff length and reminder delivery
-- The default final-confirmation timeout and expiry behavior
+- The default response cutoff length and any reminders for that cutoff
+- Whether users can change the 30-minute final-approval window and how that setting is presented
+- What happens if an activity is due to start while final approval is pending
+- Final-approval reminders and their delivery, late approval after expiry, restart, and the disposition of an unconfirmed proposal
 - How people submit late replies and join requests, and how reentry works
 - How to handle withdrawals or removals and changes after confirmation beyond renewed approval
 - Account, sign-in, participant identity, invite access, and privacy enforcement
