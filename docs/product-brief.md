@@ -15,7 +15,7 @@ The first version covers one local outing among existing student friends. The de
 
 The first version uses a small catalog of candidate options with stated showtimes and prices. People can add options manually. Synthetic or sample entries must be labeled clearly. The catalog does not claim live discovery or verified ticket prices. Live discovery for movie showtimes, restaurants, and events is deferred.
 
-Each participant provides conditions and option rankings anew for each outing. Carrying these forward as memory is outside this version. Signing in does not imply reuse of earlier preferences. Whether earlier data are retained remains open.
+Each participant provides conditions and option rankings anew for each outing. Carrying these forward as memory is outside this version. Signing in does not imply reuse of earlier preferences. The app deletes private planning data it stores, including private agent chats, conditions, and option rankings, seven days after the outing or failed planning attempt ends. Sign-in accounts remain. This policy does not require deleting accounts or claim that model or email providers erase their copies. Retention of other plan data remains open.
 
 ## Conditions, preferences, and negotiation
 
@@ -67,7 +67,7 @@ A material change to the activity, time, estimated cost, or attendee list requir
 - Whether the 30-minute final-approval window can be changed, and whether its clock is shared or starts separately for each request
 - Default response-cutoff length and reminder behavior
 - How and when people opt in to email notices, whether approval reminders are sent, and their cadence
-- Whether and how long to retain or delete earlier outing data
+- How long to retain plan, offer, decision, and shared-feed data after private chats, conditions, and rankings are deleted
 - How long agents persist beyond an outing
 - The catalog and shared group page layout, and how admitted participants submit late replies and other requests
 
