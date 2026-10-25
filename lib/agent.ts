@@ -1,5 +1,11 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { generateText, Output } from "ai";
+import {
+  generateText,
+  InvalidToolInputError,
+  Output,
+  ToolChoiceViolationError,
+  tool,
+} from "ai";
 import { z } from "zod";
 import { formatZonedDateTime } from "@/lib/cutoff";
 import {
@@ -106,94 +112,6 @@ export const ACTIVE_GO_MODEL = "deepseek-v4.1-flash";
 
 const OfferSchema = OfferCandidateSchema;
 
-const AgentReplyPromptSchema = {
-  $schema: "https://json-schema.org/draft/2020-12/schema",
-  type: "object",
-  additionalProperties: false,
-  required: ["text", "conditionUpdate"],
-  properties: {
-    text: { type: "string", minLength: 1, maxLength: 12_000 },
-    conditionUpdate: {
-      anyOf: [
-        { type: "null" },
-        {
-          type: "object",
-          additionalProperties: false,
-          required: ["hard", "flexiblePreferences", "clarifyingQuestions"],
-          properties: {
-            hard: {
-              type: "object",
-              additionalProperties: false,
-              required: [
-                "availableWindows", "maxCostCents", "requiredActivityTags", "avoidedActivityTags",
-                "attendanceDependencyNames", "minimumGroupSize",
-              ],
-              properties: {
-                availableWindows: {
-                  type: "array",
-                  maxItems: 12,
-                  items: {
-                    type: "object",
-                    additionalProperties: false,
-                    required: ["startsAt", "endsAt"],
-                    properties: {
-                      startsAt: { type: "string", format: "date-time" },
-                      endsAt: { type: "string", format: "date-time" },
-                    },
-                  },
-                },
-                maxCostCents: {
-                  anyOf: [
-                    { type: "integer", minimum: 0, maximum: 100_000 },
-                    { type: "null" },
-                  ],
-                },
-                requiredActivityTags: {
-                  type: "array", maxItems: 12,
-                  items: { type: "string", minLength: 1, maxLength: 40 },
-                },
-                avoidedActivityTags: {
-                  type: "array", maxItems: 12,
-                  items: { type: "string", minLength: 1, maxLength: 40 },
-                },
-                attendanceDependencyNames: {
-                  type: "array", maxItems: 20,
-                  items: { type: "string", minLength: 1, maxLength: 128 },
-                },
-                minimumGroupSize: { type: "integer", minimum: 1, maximum: 20 },
-              },
-            },
-            flexiblePreferences: {
-              type: "array", maxItems: 12,
-              items: { type: "string", minLength: 1, maxLength: 160 },
-            },
-            clarifyingQuestions: {
-              type: "array", maxItems: 4,
-              items: { type: "string", minLength: 1, maxLength: 240 },
-            },
-          },
-        },
-      ],
-    },
-  },
-} as const;
-
-const EmptyConditionReplyExample = {
-  text: "I've noted that.",
-  conditionUpdate: {
-    hard: {
-      availableWindows: [],
-      maxCostCents: null,
-      requiredActivityTags: [],
-      avoidedActivityTags: [],
-      attendanceDependencyNames: [],
-      minimumGroupSize: 1,
-    },
-    flexiblePreferences: [],
-    clarifyingQuestions: [],
-  },
-};
-
 function systemPrompt(input: AgentTurnInput): string {
   const cutoff = formatZonedDateTime(
     new Date(input.outing.cutoffAt),
@@ -206,13 +124,8 @@ function systemPrompt(input: AgentTurnInput): string {
     `Response cutoff: ${cutoff}.`,
     "Gather and maintain only your owner's conditions in this private conversation.",
     "Use only the owner's messages, the current condition state below, and the admitted public roster below.",
-    "Return one JSON instance matching this complete schema exactly. Do not omit required fields, use null for array fields, or add fields:",
-    JSON.stringify(AgentReplyPromptSchema),
-    "Complete example shape when there are no hard limits, flexible preferences, or questions yet (example values do not override saved owner conditions):",
-    JSON.stringify(EmptyConditionReplyExample),
-    "text is a concise plain-language reply. Set conditionUpdate to null only when this message adds or corrects no condition. Otherwise return the complete condition state, including every required field, and copy unchanged values from the current saved state.",
-    "Use [] for empty availableWindows, requiredActivityTags, avoidedActivityTags, attendanceDependencyNames, flexiblePreferences, and clarifyingQuestions. Use maxCostCents:null only when there is no saved or newly stated hard spending cap. Use ISO date-time strings with a timezone offset or Z for each window's startsAt and endsAt; these are the only window keys.",
-    "minimumGroupSize must be an integer from 1 through 20. Use 1 only when the owner has not stated a minimum and there is no saved minimum; preserve any saved minimum on later updates. flexiblePreferences and clarifyingQuestions are always arrays of strings, including when empty.",
+    "Call private_plan_reply exactly once on every turn, including clarifications and turns with no condition changes. Put the concise natural-language reply in text and the complete current condition state in conditionUpdate, or null only when this message adds or corrects no condition.",
+    "When returning a condition update, include every field and copy unchanged values from the current saved state. Keep empty list fields as empty lists and keep a missing spending cap as null.",
     "Preserve every saved hard condition across turns. Never weaken or remove one unless the owner explicitly asks for that change. A generic thanks, off-topic message, or answer that does not resolve the question must not change conditions or count as confirmation.",
     "Treat only limits the owner states as required as hard. Put ordinary likes and tradeoffs in flexiblePreferences.",
     "Ask one focused question when the amount, date, time, strictness, or person is unclear. Do not guess missing dates or time zones. Use the outing time zone for relative times. Keep unresolved questions in clarifyingQuestions and leave the related condition unchanged.",
@@ -261,6 +174,20 @@ function findAgentError(error: unknown): AgentError | null {
     current = current.cause;
   }
   return null;
+}
+
+function isInvalidToolReply(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 6 && current instanceof Error; depth += 1) {
+    if (
+      InvalidToolInputError.isInstance(current) ||
+      ToolChoiceViolationError.isInstance(current)
+    ) {
+      return true;
+    }
+    current = current.cause;
+  }
+  return false;
 }
 
 function normalizedJson<T>(text: string, schema: z.ZodType<T>): T {
@@ -412,14 +339,31 @@ function createAgent(options: ProviderOptions): Agent {
             role: message.role === "agent" ? "assistant" : "user",
             content: message.content,
           })),
+          tools: {
+            private_plan_reply: tool({
+              description: "Return the private natural-language reply and the complete current condition state, or null when unchanged.",
+              inputSchema: AgentReplySchema,
+            }),
+          },
+          toolChoice: { type: "tool", toolName: "private_plan_reply" },
           abortSignal: timeout(),
           maxRetries: 0,
           maxOutputTokens: 4000,
         });
-        return normalizedJson(result.text, AgentReplySchema);
+        if (result.toolCalls.length !== 1 || result.toolCalls[0].toolName !== "private_plan_reply") {
+          throw new AgentError("invalid_output", "model returned invalid structured output");
+        }
+        const parsed = AgentReplySchema.safeParse(result.toolCalls[0].input);
+        if (!parsed.success) {
+          throw new AgentError("invalid_output", "model returned invalid structured output");
+        }
+        return parsed.data;
       } catch (error) {
         const providerError = findAgentError(error);
         if (providerError) throw providerError;
+        if (isInvalidToolReply(error)) {
+          throw new AgentError("invalid_output", "model returned invalid structured output", { cause: error });
+        }
         if (isAbort(error)) {
           throw new AgentError("timeout", "model request timed out", { cause: error });
         }

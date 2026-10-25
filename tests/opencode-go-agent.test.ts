@@ -49,6 +49,53 @@ function completion(content: string, usage?: unknown): string {
   });
 }
 
+function toolCallCompletion(
+  calls: Array<{ id: string; name: string; arguments: unknown }>,
+  usage?: unknown,
+): string {
+  return JSON.stringify({
+    id: "chatcmpl-test",
+    object: "chat.completion",
+    created: 1,
+    model: ACTIVE_GO_MODEL,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: "assistant",
+          content: null,
+          tool_calls: calls.map((call) => ({
+            id: call.id,
+            type: "function",
+            function: {
+              name: call.name,
+              arguments: typeof call.arguments === "string"
+                ? call.arguments
+                : JSON.stringify(call.arguments),
+            },
+          })),
+        },
+        finish_reason: "tool_calls",
+      },
+    ],
+    ...(usage === undefined ? {} : { usage }),
+  });
+}
+
+function goUsage() {
+  return {
+    prompt_tokens: 1,
+    completion_tokens: 1,
+    total_tokens: 2,
+    opencode: { billing_source: "go" },
+    cost: 0,
+  };
+}
+
+function call(id: string, argumentsValue: unknown, name = "private_plan_reply") {
+  return { id, name, arguments: argumentsValue };
+}
+
 function agent(baseURL: string) {
   return createOpenCodeGoAgent({
     baseURL,
@@ -102,13 +149,7 @@ describe("OpenCode Go agent boundary", () => {
     };
     const { baseURL, captured } = await fakeGo((_request, response) => {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(completion(JSON.stringify(expected), {
-        prompt_tokens: 1,
-        completion_tokens: 1,
-        total_tokens: 2,
-        opencode: { billing_source: "go" },
-        cost: 0,
-      }));
+      response.end(toolCallCompletion([call("call-1", expected)], goUsage()));
     });
     const result = await agent(baseURL).reply(turnInput());
 
@@ -118,30 +159,82 @@ describe("OpenCode Go agent boundary", () => {
     expect(captured[0].session).toBe("ses_synthetic-conversation-1");
     expect(captured[0].userAgent).toBe("im-in-if/0.1.0");
     expect(JSON.stringify(captured[0].body)).toContain("Synthetic private input");
-    expect(JSON.stringify(captured[0].body)).toContain("conditionUpdate");
+    const tools = captured[0].body.tools as Array<{
+      type: string;
+      function: {
+        name: string;
+        parameters: {
+          type?: string;
+          required?: string[];
+          additionalProperties?: boolean;
+          properties?: Record<string, unknown>;
+          anyOf?: Array<Record<string, unknown>>;
+        };
+      };
+    }>;
+    expect(tools).toHaveLength(1);
+    expect(tools[0].type).toBe("function");
+    expect(tools[0].function.name).toBe("private_plan_reply");
+    expect(captured[0].body.tool_choice).toEqual({
+      type: "function",
+      function: { name: "private_plan_reply" },
+    });
+    const parameters = tools[0].function.parameters;
+    expect(parameters).toMatchObject({
+      type: "object",
+      required: ["text", "conditionUpdate"],
+      additionalProperties: false,
+      properties: {
+        text: { type: "string" },
+        conditionUpdate: { anyOf: expect.any(Array) },
+      },
+    });
+    const update = parameters.properties?.conditionUpdate as {
+      anyOf?: Array<{
+        type?: string;
+        required?: string[];
+        properties?: Record<string, unknown>;
+      }>;
+    };
+    const updateObject = update.anyOf?.find((schema) => schema.type === "object");
+    expect(updateObject?.required).toEqual(["hard", "flexiblePreferences", "clarifyingQuestions"]);
+    const updateProperties = updateObject?.properties;
+    expect(updateProperties).toEqual(expect.objectContaining({
+      hard: expect.any(Object),
+      flexiblePreferences: expect.any(Object),
+      clarifyingQuestions: expect.any(Object),
+    }));
+    const hard = updateProperties?.hard as {
+      required?: string[];
+      properties?: Record<string, { type?: string }>;
+    };
+    expect(hard.required).toEqual([
+      "availableWindows", "maxCostCents", "requiredActivityTags", "avoidedActivityTags",
+      "attendanceDependencyNames", "minimumGroupSize",
+    ]);
+    expect(hard.properties?.minimumGroupSize?.type).toBe("integer");
   });
 
-  it("sends the complete required condition-output schema in the captured request", async () => {
+  it("sends the reply schema through one forced tool and keeps behavioral guidance concise", async () => {
     const { baseURL, captured } = await fakeGo((_request, response) => {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(completion(JSON.stringify({ text: "What time works?", conditionUpdate: null }), {
-        prompt_tokens: 1,
-        completion_tokens: 1,
-        total_tokens: 2,
-        opencode: { billing_source: "go" },
-        cost: 0,
-      }));
+      response.end(toolCallCompletion([
+        call("call-1", { text: "What time works?", conditionUpdate: null }),
+      ], goUsage()));
     });
 
     await agent(baseURL).reply(turnInput());
+    expect(captured).toHaveLength(1);
+    expect(captured[0].body.tools).toHaveLength(1);
+    expect(captured[0].body.tool_choice).toEqual({
+      type: "function",
+      function: { name: "private_plan_reply" },
+    });
     const messages = captured[0].body.messages as Array<{ role?: string; content?: unknown }>;
     const prompt = String(messages.find((message) => message.role === "system")?.content ?? "");
-    expect(prompt).toContain('"required":["text","conditionUpdate"]');
-    expect(prompt).toContain('"minimumGroupSize":{"type":"integer","minimum":1,"maximum":20}');
-    expect(prompt).toContain('"flexiblePreferences":{"type":"array","maxItems":12');
-    expect(prompt).toContain('"clarifyingQuestions":{"type":"array","maxItems":4');
-    expect(prompt).toContain('"startsAt":{"type":"string","format":"date-time"}');
-    expect(prompt).toContain('"attendanceDependencyNames":[],"minimumGroupSize":1');
+    expect(prompt).toContain("Call private_plan_reply exactly once on every turn");
+    expect(prompt).not.toContain("additionalProperties");
+    expect(prompt).not.toContain('"minimumGroupSize":{"type"');
     expect(prompt).toContain("copy unchanged values from the current saved state");
   });
 
@@ -163,17 +256,31 @@ describe("OpenCode Go agent boundary", () => {
     };
     const { baseURL } = await fakeGo((_request, response) => {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(completion(JSON.stringify(malformed), {
-        prompt_tokens: 1,
-        completion_tokens: 1,
-        total_tokens: 2,
-        opencode: { billing_source: "go" },
-        cost: 0,
-      }));
+      response.end(toolCallCompletion([call("call-1", malformed)], goUsage()));
     });
 
     await expect(agent(baseURL).reply(turnInput()))
       .rejects.toMatchObject({ code: "invalid_output" } satisfies Partial<AgentError>);
+  });
+
+  it.each([
+    ["missing tool call", () => completion("Synthetic response", goUsage())],
+    ["wrong tool name", () => toolCallCompletion([
+      call("call-1", { text: "Synthetic", conditionUpdate: null }, "other_tool"),
+    ], goUsage())],
+    ["multiple tool calls", () => toolCallCompletion([
+      call("call-1", { text: "First", conditionUpdate: null }),
+      call("call-2", { text: "Second", conditionUpdate: null }),
+    ], goUsage())],
+  ])("rejects a %s without a database-ready reply", async (_case, responseBody) => {
+    const { baseURL, captured } = await fakeGo((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(responseBody());
+    });
+
+    await expect(agent(baseURL).reply(turnInput()))
+      .rejects.toMatchObject({ code: "invalid_output" } satisfies Partial<AgentError>);
+    expect(captured).toHaveLength(1);
   });
 
   it.each([
