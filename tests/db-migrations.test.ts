@@ -89,7 +89,68 @@ describe("versioned starter-schema upgrade", () => {
       const versions = await db.query<{ version: number }>(
         `select version from schema_migrations order by version`,
       );
-      expect(versions.map((row) => row.version)).toEqual([1, 2, 3]);
+      expect(versions.map((row) => row.version)).toEqual([1, 2, 3, 4]);
+    } finally {
+      await pg.close();
+    }
+  });
+});
+
+describe("version 4 migration", () => {
+  it("adds private agent options without changing legacy sample records and is repeatable", async () => {
+    const pg = new PGlite();
+    try {
+      const db = createPgliteDb(pg);
+      await migrate(db);
+      const outingId = crypto.randomUUID();
+      const legacySampleId = crypto.randomUUID();
+      await db.query(
+        `insert into outings (id, starter_user_id, suggestion, cutoff_at, cutoff_time_zone)
+         values ($1, 'starter', 'Legacy outing', now() + interval '1 day', 'UTC')`,
+        [outingId],
+      );
+      await db.query(
+        `insert into outing_options
+          (id, outing_id, created_by_user_id, title, activity, starts_at,
+           estimated_cost_cents, activity_tags, source)
+         values ($1, $2, 'starter', 'Legacy movie', 'Movie', now() + interval '2 days', 900, '["movie"]', 'sample')`,
+        [legacySampleId, outingId],
+      );
+
+      await db.query(`alter table outing_options drop constraint if exists outing_options_source_check`);
+      await db.query(
+        `alter table outing_options add constraint outing_options_source_check
+         check (source in ('sample', 'manual'))`,
+      );
+      await db.query(`alter table outing_options drop column visibility`);
+      await db.query(`delete from schema_migrations where version = 4`);
+
+      await Promise.all([migrate(db), migrate(db)]);
+
+      const preserved = await db.query<{ source: string; visibility: string }>(
+        `select source, visibility from outing_options where id = $1`,
+        [legacySampleId],
+      );
+      expect(preserved).toEqual([{ source: "sample", visibility: "shared" }]);
+      const agentOptionId = crypto.randomUUID();
+      await db.query(
+        `insert into outing_options
+          (id, outing_id, created_by_user_id, title, activity, starts_at,
+           estimated_cost_cents, activity_tags, source, visibility)
+         values ($1, $2, 'starter', 'Private agent option', 'Dinner', now() + interval '2 days',
+                 2500, '["dinner"]', 'agent', 'private')`,
+        [agentOptionId, outingId],
+      );
+      await migrate(db);
+      const agentOption = await db.query<{ source: string; visibility: string }>(
+        `select source, visibility from outing_options where id = $1`,
+        [agentOptionId],
+      );
+      expect(agentOption).toEqual([{ source: "agent", visibility: "private" }]);
+      const versions = await db.query<{ version: number }>(
+        `select version from schema_migrations order by version`,
+      );
+      expect(versions.map((row) => row.version)).toEqual([1, 2, 3, 4]);
     } finally {
       await pg.close();
     }

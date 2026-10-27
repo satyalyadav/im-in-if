@@ -32,6 +32,38 @@ export const OfferCandidateSchema = z.object({
 
 export type OfferCandidate = z.infer<typeof OfferCandidateSchema>;
 
+export const NewOfferOptionSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  activity: z.string().trim().min(1).max(80),
+  startsAt: isoDateTime,
+  estimatedCostCents: z.number().int().min(0).max(100_000),
+  activityTags: z.array(z.string().trim().min(1).max(40)).max(12),
+}).strict();
+
+export const NewOptionOfferCandidateSchema = z.object({
+  kind: z.literal("new_option"),
+  option: NewOfferOptionSchema,
+  attendeeUserIds: z.array(z.string().min(1).max(128)).min(1).max(20),
+  counterOfferToId: z.string().uuid().nullable(),
+  privateNote: z.string().trim().max(1000),
+}).strict();
+
+export const OfferClarificationSchema = z.object({
+  kind: z.literal("clarification"),
+  question: z.string().trim().min(1).max(400),
+}).strict();
+
+export const OfferGenerationResultSchema = z.union([
+  OfferCandidateSchema,
+  NewOptionOfferCandidateSchema,
+  OfferClarificationSchema,
+]);
+
+export type NewOfferOption = z.infer<typeof NewOfferOptionSchema>;
+export type NewOptionOfferCandidate = z.infer<typeof NewOptionOfferCandidateSchema>;
+export type OfferClarification = z.infer<typeof OfferClarificationSchema>;
+export type OfferGenerationResult = z.infer<typeof OfferGenerationResultSchema>;
+
 export type CatalogOption = {
   id: string;
   title: string;
@@ -39,7 +71,7 @@ export type CatalogOption = {
   startsAt: string;
   estimatedCostCents: number;
   activityTags: string[];
-  source: "sample" | "manual";
+  source: "sample" | "manual" | "agent";
 };
 
 export type PublicOffer = {

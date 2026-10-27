@@ -13,7 +13,6 @@ import { validateCandidate } from "@/lib/planning";
 import {
   emptyConditionInterpretation,
   type CatalogOption,
-  type OfferCandidate,
 } from "@/lib/planning-types";
 
 type Captured = {
@@ -118,6 +117,72 @@ function call(id: string, argumentsValue: unknown, name = "private_plan_reply") 
   return { id, name, arguments: argumentsValue };
 }
 
+const OFFER_TOOL_NAME = "private_plan_offer";
+const OFFER_SESSION = "ses_synthetic-maya-offer";
+
+function existingOptionToolInput(optionId: string) {
+  return {
+    kind: "existing_option",
+    optionId,
+    option: null,
+    attendeeUserIds: ["maya-user"],
+    counterOfferToId: null,
+    privateNote: "Synthetic private offer note.",
+    question: null,
+  };
+}
+
+function offerRequestIsForced(
+  request: IncomingMessage,
+  body: Record<string, unknown>,
+  expectedSession = OFFER_SESSION,
+): boolean {
+  const toolChoice = body.tool_choice as { type?: string; function?: { name?: string } } | undefined;
+  const tools = body.tools as Array<{ function?: { name?: string } }> | undefined;
+  const sessionHeader = request.headers["x-opencode-session"];
+  const session = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader;
+  return body.model === ACTIVE_GO_MODEL &&
+    (body.thinking as { type?: string } | undefined)?.type === "disabled" &&
+    session === expectedSession &&
+    toolChoice?.type === "function" && toolChoice.function?.name === OFFER_TOOL_NAME &&
+    tools?.length === 1 && tools[0].function?.name === OFFER_TOOL_NAME;
+}
+
+function respondIfOfferToolIsForced(
+  request: IncomingMessage,
+  response: ServerResponse,
+  body: Record<string, unknown>,
+  responseBody: string,
+  expectedSession = OFFER_SESSION,
+): void {
+  if (!offerRequestIsForced(request, body, expectedSession)) {
+    response.writeHead(400, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: { message: "expected forced typed offer tool request" } }));
+    return;
+  }
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(responseBody);
+}
+
+function expectForcedOfferRequest(captured: Captured, expectedSession = OFFER_SESSION): void {
+  expect(captured).toMatchObject({
+    session: expectedSession,
+    body: {
+      model: ACTIVE_GO_MODEL,
+      thinking: { type: "disabled" },
+      tool_choice: { type: "function", function: { name: OFFER_TOOL_NAME } },
+      tools: [{ type: "function", function: { name: OFFER_TOOL_NAME } }],
+    },
+  });
+  const tools = captured.body.tools as Array<{
+    function: { parameters: { required: string[]; additionalProperties: boolean } };
+  }>;
+  expect(tools[0].function.parameters.required).toEqual([
+    "kind", "optionId", "option", "attendeeUserIds", "counterOfferToId", "privateNote", "question",
+  ]);
+  expect(tools[0].function.parameters.additionalProperties).toBe(false);
+}
+
 function agent(baseURL: string) {
   return createOpenCodeGoAgent({
     baseURL,
@@ -154,6 +219,7 @@ function offerInput(options: CatalogOption[]): OfferGenerationInput {
     participantUserId: "maya-user",
     privateInput: "Synthetic Maya private input",
     privateConditions,
+    recentConversation: [],
     privateRankings: [],
     options,
     participants: [
@@ -177,7 +243,7 @@ function catalogOption(
     startsAt,
     estimatedCostCents,
     activityTags,
-    source: "sample",
+    source: "manual",
   };
 }
 
@@ -300,25 +366,21 @@ describe("OpenCode Go agent boundary", () => {
       catalogOption("00000000-0000-4000-8000-000000000010", "2026-10-28T05:00:00.000Z", 1200, ["movie", "comedy"]),
       catalogOption("00000000-0000-4000-8000-000000000011", "2026-10-28T05:00:00.000Z", 1200, ["live"]),
     ];
-    const { baseURL, captured } = await fakeGo((_request, response, body) => {
+    const { baseURL, captured } = await fakeGo((request, response, body) => {
       const messages = body.messages as Array<{ role?: string; content?: unknown }>;
       const prompt = String(messages.find((message) => message.role === "user")?.content ?? "");
       const catalogLine = prompt.split("\n").find((line) => line.startsWith("Catalog options: "));
       const supplied = JSON.parse(catalogLine?.slice("Catalog options: ".length) ?? "[]") as CatalogOption[];
       const selected = supplied[0];
       if (!selected) throw new Error("mock provider received no catalog options");
-      const candidate: OfferCandidate = {
-        optionId: selected.id,
-        activity: selected.activity,
-        startsAt: selected.startsAt,
-        estimatedCostCents: selected.estimatedCostCents,
-        activityTags: selected.activityTags,
-        attendeeUserIds: ["maya-user"],
-        counterOfferToId: null,
-        privateNote: "Synthetic private offer note.",
-      };
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(completion(JSON.stringify(candidate), goUsage()));
+      respondIfOfferToolIsForced(
+        request,
+        response,
+        body,
+        toolCallCompletion([
+          call("offer-call-1", existingOptionToolInput(selected.id), OFFER_TOOL_NAME),
+        ], goUsage()),
+      );
     });
     const provider = agent(baseURL);
     const input = offerInput(options);
@@ -327,6 +389,7 @@ describe("OpenCode Go agent boundary", () => {
     const candidate = await provider.generateOffer(input);
 
     expect(captured).toHaveLength(1);
+    expectForcedOfferRequest(captured[0]);
     const messages = captured[0].body.messages as Array<{ role?: string; content?: unknown }>;
     const prompt = String(messages.find((message) => message.role === "user")?.content ?? "");
     expect(prompt).not.toContain(options[0].id);
@@ -338,6 +401,7 @@ describe("OpenCode Go agent boundary", () => {
     expect(prompt).toContain('"startsAtLocal":"Oct 27, 2026, 8:00 PM MST"');
     expect(prompt).toContain('"timeZone":"America/Phoenix"');
     expect(prompt).toContain("has already passed your owner's hard availability, budget, and activity-tag checks");
+    if (!("optionId" in candidate)) throw new Error("expected an existing-option offer");
     expect(candidate.optionId).toBe(options[1].id);
     expect(validateCandidate(
       candidate,
@@ -348,22 +412,122 @@ describe("OpenCode Go agent boundary", () => {
     )).toEqual({ ok: true });
   });
 
-  it("does not call the provider when no catalog options fit the owner's hard conditions", async () => {
+  it("asks for a focused clarification when no catalog option fits", async () => {
     const options = [
       catalogOption("00000000-0000-4000-8000-000000000007", "2026-10-28T02:00:00.000Z", 900),
       catalogOption("00000000-0000-4000-8000-000000000009", "2026-10-28T04:00:00.000Z", 1600),
       catalogOption("00000000-0000-4000-8000-000000000010", "2026-10-28T05:00:00.000Z", 1200, ["movie", "comedy"]),
+      { ...catalogOption("00000000-0000-4000-8000-000000000012", "2026-10-28T02:30:00.000Z", 900), source: "sample" as const },
     ];
-    const { baseURL, captured } = await fakeGo((_request, response) => {
-      response.writeHead(400, { "content-type": "application/json" });
-      response.end(JSON.stringify({ error: { message: "the provider must not be called" } }));
+    const { baseURL, captured } = await fakeGo((request, response, body) => {
+      const messages = body.messages as Array<{ role?: string; content?: unknown }>;
+      const prompt = String(messages.find((message) => message.role === "user")?.content ?? "");
+      expect(prompt).toContain("Catalog options: []");
+      respondIfOfferToolIsForced(request, response, body, toolCallCompletion([
+        call("offer-call-1", {
+          kind: "clarification",
+          optionId: null,
+          option: null,
+          attendeeUserIds: [],
+          counterOfferToId: null,
+          privateNote: "",
+          question: "Which date and time should I use for dinner?",
+        }, OFFER_TOOL_NAME),
+      ], goUsage()));
     });
     const provider = agent(baseURL);
     if (!provider.generateOffer) throw new Error("offer generation is unavailable");
 
+    await expect(provider.generateOffer(offerInput(options))).resolves.toEqual({
+      kind: "clarification",
+      question: "Which date and time should I use for dinner?",
+    });
+    expect(captured).toHaveLength(1);
+    expectForcedOfferRequest(captured[0]);
+  });
+
+  it("drafts a relevant option from private details when the public catalog is empty", async () => {
+    const { baseURL, captured } = await fakeGo((request, response, body) => {
+      const messages = body.messages as Array<{ role?: string; content?: unknown }>;
+      const prompt = String(messages.find((message) => message.role === "user")?.content ?? "");
+      expect(prompt).toContain('Outing suggestion: "Sushi Friday"');
+      expect(prompt).toContain("Synthetic Maya private input");
+      expect(prompt).toContain("Owner availability windows:");
+      expect(prompt).toContain("A new option's estimatedCostCents is a generic per-person estimate");
+      expect(prompt).toContain("Do not claim live restaurant availability, a booking, or a reservation.");
+      expect(prompt).toContain("Use a supplied public catalog option only when its activity fits the outing suggestion and the owner's private input and preferences, as well as the hard conditions.");
+      expect(prompt).toContain("Otherwise draft a relevant generic option or ask one focused clarification.");
+      expect(prompt).toContain("Follow the owner's latest explicit user messages about activity and venue over older user messages and the initial suggestion.");
+      expect(prompt).toContain("Treat only the current structured condition state above as hard limits; chat does not create or relax hard limits without the existing owner condition-update flow.");
+      expect(prompt).toContain('Recent private owner conversation: [{"role":"user","content":"Use Kiku House near Central."}]');
+      respondIfOfferToolIsForced(request, response, body, toolCallCompletion([
+        call("offer-call-1", {
+          kind: "new_option",
+          optionId: null,
+          option: {
+            title: "Sushi dinner",
+            activity: "Sushi dinner",
+            startsAt: "2026-11-07T03:00:00.000Z",
+            estimatedCostCents: 4500,
+            activityTags: ["sushi", "dinner"],
+          },
+          attendeeUserIds: ["maya-user"],
+          counterOfferToId: null,
+          privateNote: "Generic per-person estimate.",
+          question: null,
+        }, OFFER_TOOL_NAME),
+      ], goUsage()));
+    });
+    const provider = agent(baseURL);
+    if (!provider.generateOffer) throw new Error("offer generation is unavailable");
+    const input = offerInput([]);
+    input.outing = { ...outing, suggestion: "Sushi Friday", cutoffAt: "2026-11-01T02:30:00.000Z" };
+    input.privateConditions.hard.availableWindows = [{
+      startsAt: "2026-11-07T02:00:00.000Z",
+      endsAt: "2026-11-07T04:00:00.000Z",
+    }];
+    input.privateConditions.hard.maxCostCents = 6000;
+    input.privateConditions.hard.requiredActivityTags = [];
+    input.recentConversation = [{ role: "user", content: "Use Kiku House near Central." }];
+
+    const candidate = await provider.generateOffer(input);
+
+    expect(candidate).toMatchObject({ kind: "new_option", option: { activity: "Sushi dinner" } });
+    expect(captured).toHaveLength(1);
+    expectForcedOfferRequest(captured[0]);
+  });
+
+  it.each([
+    ["missing tool call", () => completion("Synthetic response", goUsage())],
+    ["wrong tool name", () => toolCallCompletion([
+      call("offer-call-1", existingOptionToolInput("00000000-0000-4000-8000-000000000014"), "private_plan_reply"),
+    ], goUsage())],
+    ["multiple tool calls", () => toolCallCompletion([
+      call("offer-call-1", existingOptionToolInput("00000000-0000-4000-8000-000000000014"), OFFER_TOOL_NAME),
+      call("offer-call-2", existingOptionToolInput("00000000-0000-4000-8000-000000000014"), OFFER_TOOL_NAME),
+    ], goUsage())],
+    ["branch-inconsistent output", () => toolCallCompletion([
+      call("offer-call-1", {
+        ...existingOptionToolInput("00000000-0000-4000-8000-000000000014"),
+        optionId: null,
+      }, OFFER_TOOL_NAME),
+    ], goUsage())],
+  ])("rejects offer generation with a %s", async (_case, responseBody) => {
+    const { baseURL, captured } = await fakeGo((request, response, body) => {
+      respondIfOfferToolIsForced(request, response, body, responseBody());
+    });
+    const provider = agent(baseURL);
+    if (!provider.generateOffer) throw new Error("offer generation is unavailable");
+    const options = [catalogOption(
+      "00000000-0000-4000-8000-000000000014",
+      "2026-10-28T03:00:00.000Z",
+      900,
+    )];
+
     await expect(provider.generateOffer(offerInput(options)))
-      .rejects.toMatchObject({ code: "no_feasible_options" } satisfies Partial<AgentError>);
-    expect(captured).toHaveLength(0);
+      .rejects.toMatchObject({ code: "invalid_output" } satisfies Partial<AgentError>);
+    expect(captured).toHaveLength(1);
+    expectForcedOfferRequest(captured[0]);
   });
 
   it("pins DeepSeek, uses an honest app identity and stable session, and accepts explicit zero-cost metadata", async () => {

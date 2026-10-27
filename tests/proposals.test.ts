@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPgliteDb, migrate, type Db, type DbStatement } from "@/lib/db";
 import { createOuting } from "@/lib/outings-api";
 import { emptyConditionInterpretation } from "@/lib/planning-types";
-import { handlePlanningAction, requestAdmission } from "@/lib/planning-api";
+import { getOutingWorkspace, handlePlanningAction, requestAdmission } from "@/lib/planning-api";
 
 const A = "proposal-starter";
 const B = "proposal-attendee";
@@ -37,6 +37,20 @@ async function setupPlan(includeC = false) {
     cutoffTimeZone: "America/Phoenix",
   });
   const outing = created.body.outing as { id: string; inviteToken: string };
+  for (const [title, startsAt] of [
+    ["Synthetic first option", "2026-11-02T02:00:00.000Z"],
+    ["Synthetic second option", "2026-11-02T03:00:00.000Z"],
+  ]) {
+    const option = await handlePlanningAction(ctx(A), outing.id, {
+      action: "add_option",
+      title,
+      activity: "Movie",
+      startsAt,
+      estimatedCostCents: 900,
+      activityTags: ["movie"],
+    });
+    expect(option.status).toBe(201);
+  }
   await requestAdmission(ctx(B, ["attendee@example.test"]), outing.inviteToken, {
     displayName: "Attendee",
     emailOptIn: true,
@@ -200,6 +214,26 @@ describe("versioned proposal approvals", () => {
       `select status, attendee_user_ids from proposals where id = $1`, [next.id],
     );
     expect(current[0]).toMatchObject({ status: "confirmed", attendee_user_ids: plan.members });
+  });
+
+  it("returns the published approval timestamp and deadline unchanged when a participant reads the workspace", async () => {
+    const plan = await setupPlan();
+    const proposal = await publishProposal(plan.outingId, plan.offerId);
+    const before = await db.query<{ published_at: string | Date; expires_at: string | Date }>(
+      `select published_at, expires_at from proposals where id = $1`, [proposal.id],
+    );
+    const publishedAt = new Date(before[0].published_at).toISOString();
+    const expiresAt = new Date(before[0].expires_at).toISOString();
+
+    const workspace = await getOutingWorkspace(ctx(B), plan.outingId);
+
+    expect(workspace.status).toBe(200);
+    expect(workspace.body.proposal).toMatchObject({ publishedAt, expiresAt });
+    const after = await db.query<{ published_at: string | Date; expires_at: string | Date }>(
+      `select published_at, expires_at from proposals where id = $1`, [proposal.id],
+    );
+    expect(new Date(after[0].published_at).toISOString()).toBe(publishedAt);
+    expect(new Date(after[0].expires_at).toISOString()).toBe(expiresAt);
   });
 
   it.each(["request_join", "request_departure"] as const)(

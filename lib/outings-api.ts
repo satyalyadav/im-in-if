@@ -102,27 +102,6 @@ function isUuid(value: string): boolean {
   return UUID_PATTERN.test(value);
 }
 
-function nextCalendarDateInTimeZone(instant: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(instant);
-  const values = new Map(parts.map((part) => [part.type, part.value]));
-  const nextDate = new Date(0);
-  nextDate.setUTCFullYear(
-    Number(values.get("year")),
-    Number(values.get("month")) - 1,
-    Number(values.get("day")) + 1,
-  );
-  return [
-    String(nextDate.getUTCFullYear()).padStart(4, "0"),
-    String(nextDate.getUTCMonth() + 1).padStart(2, "0"),
-    String(nextDate.getUTCDate()).padStart(2, "0"),
-  ].join("-");
-}
-
 function iso(value: string | Date): string {
   return new Date(value).toISOString();
 }
@@ -481,31 +460,6 @@ export async function createOuting(
   const outingId = crypto.randomUUID();
   const inviteToken = crypto.randomUUID();
   const sessionId = `ses_${crypto.randomUUID()}`;
-  const firstSampleId = crypto.randomUUID();
-  const secondSampleId = crypto.randomUUID();
-  const sampleDate = nextCalendarDateInTimeZone(cutoff.instant, parsed.data.cutoffTimeZone);
-  const sampleStartsAt = resolveCutoffInstant({
-    date: sampleDate,
-    time: "19:00",
-    timeZone: parsed.data.cutoffTimeZone,
-  });
-  const laterSampleStartsAt = resolveCutoffInstant({
-    date: sampleDate,
-    time: "20:00",
-    timeZone: parsed.data.cutoffTimeZone,
-  });
-  if (!sampleStartsAt.ok) {
-    return {
-      status: 400,
-      body: { error: sampleStartsAt.error },
-    };
-  }
-  if (!laterSampleStartsAt.ok) {
-    return {
-      status: 400,
-      body: { error: laterSampleStartsAt.error },
-    };
-  }
   const result = await context.db.transaction<OutingRow>([
     {
       text: `insert into outings
@@ -530,22 +484,6 @@ export async function createOuting(
       text: `insert into participant_preferences (outing_id, user_id)
        values ($1, $2)`,
       params: [outingId, context.userId],
-    },
-    {
-      text: `insert into outing_options
-        (id, outing_id, created_by_user_id, title, activity, starts_at,
-         estimated_cost_cents, activity_tags, source)
-       values
-        ($1, $2, $3, 'Sample: film night at 7 PM', 'Movie', $4, 900, '["movie"]', 'sample'),
-        ($5, $2, $3, 'Sample: film night at 8 PM', 'Movie', $6, 1200, '["movie"]', 'sample')`,
-      params: [
-        firstSampleId,
-        outingId,
-        context.userId,
-        sampleStartsAt.instant.toISOString(),
-        secondSampleId,
-        laterSampleStartsAt.instant.toISOString(),
-      ],
     },
   ]);
 

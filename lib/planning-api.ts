@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AgentError, getAgent, type Agent } from "@/lib/agent";
+import { AgentError, getAgent, type Agent, type PrivateConversationMessage } from "@/lib/agent";
 import { dispatchOutbox } from "@/lib/email";
 import type { Db } from "@/lib/db";
 import { processOutingDeadlines } from "@/lib/maintenance";
@@ -10,7 +10,7 @@ import {
   type OwnerContext,
 } from "@/lib/outings-api";
 import {
-  OfferCandidateSchema,
+  OfferGenerationResultSchema,
   emptyConditionInterpretation,
   parseJsonValue,
   type CatalogOption,
@@ -65,7 +65,9 @@ type OptionRow = {
   starts_at: string | Date;
   estimated_cost_cents: number;
   activity_tags: unknown;
-  source: "sample" | "manual";
+  source: "sample" | "manual" | "agent";
+  visibility: "private" | "shared";
+  created_by_user_id?: string;
 };
 
 type PreferenceRow = {
@@ -89,7 +91,13 @@ type OfferRow = {
   counter_offer_to_id: string | null;
   status: "draft" | "published" | "withdrawn";
   created_at: string | Date;
+  option_title?: string;
 };
+
+const RECENT_OFFER_CONVERSATION_TURN_LIMIT = 20;
+const RECENT_OFFER_CONVERSATION_MESSAGE_LIMIT = RECENT_OFFER_CONVERSATION_TURN_LIMIT * 2;
+const RECENT_OFFER_CONVERSATION_MESSAGE_CHARS = 1_200;
+const RECENT_OFFER_CONVERSATION_TOTAL_CHARS = 8_000;
 
 type ProposalRow = {
   id: string;
@@ -336,7 +344,9 @@ export async function getOutingWorkspace(
     loadParticipants(context.db, outingId),
     context.db.query<OptionRow>(
       `select id, title, activity, starts_at, estimated_cost_cents, activity_tags, source
-         from outing_options where outing_id = $1 order by starts_at`,
+         from outing_options where outing_id = $1
+           and source in ('manual', 'agent') and visibility = 'shared'
+         order by starts_at`,
       [outingId],
     ),
     context.db.query<PreferenceRow>(
@@ -346,11 +356,17 @@ export async function getOutingWorkspace(
     ),
     listOwnMessages(context.db, outingId, context.userId),
     context.db.query<OfferRow>(
-      `select id, owner_user_id, option_id, activity, starts_at, estimated_cost_cents,
-              attendee_user_ids, activity_tags, private_note, counter_offer_to_id, status, created_at
-         from offers
-        where outing_id = $1 and (status = 'published' or owner_user_id = $2)
-        order by created_at desc limit 40`,
+      `select f.id, f.owner_user_id, f.option_id, f.activity, f.starts_at, f.estimated_cost_cents,
+              f.attendee_user_ids, f.activity_tags, f.private_note, f.counter_offer_to_id,
+              f.status, f.created_at, o.title as option_title
+         from offers f join outing_options o on o.id = f.option_id and o.outing_id = f.outing_id
+        where f.outing_id = $1
+          and o.source in ('manual', 'agent')
+          and (o.visibility = 'shared' or
+               (o.visibility = 'private' and o.source = 'agent'
+                and f.owner_user_id = $2 and f.status = 'draft'))
+          and (f.status = 'published' or f.owner_user_id = $2)
+        order by f.created_at desc limit 40`,
       [outingId, context.userId],
     ),
     context.db.query<{ response_status: string; email_opt_in: boolean; notification_email: string | null }>(
@@ -413,7 +429,11 @@ export async function getOutingWorkspace(
   const allOffers = offersRows.filter((offer) => offer.status === "published");
   const ownDraftOffers = offersRows
     .filter((offer) => offer.owner_user_id === context.userId && offer.status === "draft")
-    .map((offer) => ({ ...toPublicOffer(offer), privateNote: offer.private_note }));
+    .map((offer) => ({
+      ...toPublicOffer(offer),
+      optionTitle: offer.option_title ?? offer.activity,
+      privateNote: offer.private_note,
+    }));
 
   return api(200, {
     viewerUserId: context.userId,
@@ -507,8 +527,9 @@ async function getPrivateTiePoll(db: Db, outingId: string, userId: string) {
   const poll = rows[0];
   if (!poll) return null;
   const options = await db.query<OptionRow>(
-    `select id, title, activity, starts_at, estimated_cost_cents, activity_tags, source
-       from outing_options where id = any($1::uuid[])`,
+    `select id, title, activity, starts_at, estimated_cost_cents, activity_tags, source, visibility
+       from outing_options where id = any($1::uuid[])
+         and source in ('manual', 'agent') and visibility = 'shared'`,
     [[poll.option_a_id, poll.option_b_id]],
   );
   const byId = new Map(options.map((option) => [option.id, toCatalogOption(option)]));
@@ -832,7 +853,8 @@ async function rankOptions(
 ): Promise<ApiResponse> {
   if (new Set(optionIds).size !== optionIds.length) return api(400, { error: "duplicate_option" });
   const options = await context.db.query<{ id: string }>(
-    `select id from outing_options where outing_id = $1 and id = any($2::uuid[])`,
+    `select id from outing_options where outing_id = $1 and id = any($2::uuid[])
+       and source in ('manual', 'agent') and visibility = 'shared'`,
     [outingId, optionIds],
   );
   if (options.length !== optionIds.length) return api(400, { error: "invalid_option" });
@@ -875,7 +897,7 @@ async function generateOffer(
   if (agent instanceof AgentError || !agent.generateOffer) {
     return api(503, { error: "agent_unavailable" });
   }
-  const [ownRows, participants, optionsRows, offerRows, conditionRows] = await Promise.all([
+  const [ownRows, participants, optionsRows, offerRows, conditionRows, recentConversation] = await Promise.all([
     context.db.query<PreferenceRow & { agent_session_id: string }>(
       `select pref.private_input, pref.interpretation, pref.interpretation_ready, pref.rankings,
               p.agent_session_id
@@ -891,18 +913,24 @@ async function generateOffer(
       [outing.id],
     ).then((rows) => rows.map(toParticipantRow)),
     context.db.query<OptionRow>(
-      `select id, title, activity, starts_at, estimated_cost_cents, activity_tags, source
-         from outing_options where outing_id = $1 order by starts_at`,
+      `select id, title, activity, starts_at, estimated_cost_cents, activity_tags, source, visibility
+         from outing_options where outing_id = $1
+           and source in ('manual', 'agent') and visibility = 'shared'
+         order by starts_at`,
       [outing.id],
     ),
     context.db.query<OfferRow>(
-      `select id, owner_user_id, option_id, activity, starts_at, estimated_cost_cents,
-              attendee_user_ids, activity_tags, private_note, counter_offer_to_id, status, created_at
-         from offers where outing_id = $1 and status = 'published'
-         order by created_at desc limit 30`,
+      `select f.id, f.owner_user_id, f.option_id, f.activity, f.starts_at, f.estimated_cost_cents,
+              f.attendee_user_ids, f.activity_tags, f.private_note, f.counter_offer_to_id,
+              f.status, f.created_at
+         from offers f join outing_options o on o.id = f.option_id and o.outing_id = f.outing_id
+        where f.outing_id = $1 and f.status = 'published'
+          and o.source in ('manual', 'agent') and o.visibility = 'shared'
+        order by f.created_at desc limit 30`,
       [outing.id],
     ),
     loadConditionRows(context.db, outing.id),
+    loadRecentOwnerConversation(context.db, outing.id, context.userId),
   ]);
   const own = ownRows[0];
   if (!own?.interpretation_ready || !own.interpretation) {
@@ -917,7 +945,6 @@ async function generateOffer(
     return api(409, { error: "interest_required" });
   }
   const options = optionsRows.map(toCatalogOption);
-  if (options.length === 0) return api(409, { error: "no_options" });
 
   const tieRows = await context.db.query<{
     option_a_id: string;
@@ -953,7 +980,9 @@ async function generateOffer(
       participantUserId: context.userId,
       privateInput: own.private_input,
       privateConditions: conditions,
-      privateRankings: parseJsonValue(own.rankings, [] as string[]),
+      recentConversation,
+      privateRankings: parseJsonValue(own.rankings, [] as string[])
+        .filter((optionId) => options.some((option) => option.id === optionId)),
       options,
       participants: interested.map((participant) => ({
         userId: participant.user_id,
@@ -962,32 +991,63 @@ async function generateOffer(
       approvedOffers: offerRows.map(toPublicOffer),
       tieContext,
     });
-    const validCandidate = OfferCandidateSchema.safeParse(candidate);
-    if (!validCandidate.success) {
+    const parsedResult = OfferGenerationResultSchema.safeParse(candidate);
+    if (!parsedResult.success) {
       return api(502, {
         error: "invalid_output",
-        fields: validCandidate.error.issues.map((issue) => issue.path.join(".")),
+        fields: parsedResult.error.issues.map((issue) => issue.path.join(".")),
       });
     }
+    if ("kind" in parsedResult.data && parsedResult.data.kind === "clarification") {
+      return api(409, {
+        error: "clarification_required",
+        question: parsedResult.data.question,
+      });
+    }
+    const draftOption = "kind" in parsedResult.data ? parsedResult.data.option : null;
+    const validCandidate: OfferCandidate = draftOption
+      ? {
+          optionId: crypto.randomUUID(),
+          activity: draftOption.activity,
+          startsAt: draftOption.startsAt,
+          estimatedCostCents: draftOption.estimatedCostCents,
+          activityTags: draftOption.activityTags,
+          attendeeUserIds: parsedResult.data.attendeeUserIds,
+          counterOfferToId: parsedResult.data.counterOfferToId,
+          privateNote: parsedResult.data.privateNote,
+        }
+      : parsedResult.data as OfferCandidate;
+    if (draftOption && (
+      new Date(draftOption.startsAt) <= new Date() ||
+      new Date(draftOption.startsAt) <= new Date(outing.cutoff_at)
+    )) return api(409, { error: "offer_not_feasible", reason: "activity_time_invalid" });
     if (tieContext) {
-      const selectedAttendees = [...validCandidate.data.attendeeUserIds].sort();
+      const selectedAttendees = [...validCandidate.attendeeUserIds].sort();
       const tiedAttendees = [...tieContext.participantUserIds].sort();
       if (
         selectedAttendees.length !== tiedAttendees.length ||
         selectedAttendees.some((id, index) => id !== tiedAttendees[index]) ||
-        (tieContext.selectedOptionId !== null && validCandidate.data.optionId !== tieContext.selectedOptionId) ||
-        (tieContext.everyoneAnsweredEither && !tieContext.optionIds.includes(validCandidate.data.optionId))
+        (tieContext.selectedOptionId !== null && validCandidate.optionId !== tieContext.selectedOptionId) ||
+        (tieContext.everyoneAnsweredEither && !tieContext.optionIds.includes(validCandidate.optionId))
       ) return api(409, { error: "tie_choice_required" });
     }
-    if (validCandidate.data.counterOfferToId !== null) {
+    if (validCandidate.counterOfferToId !== null) {
       const referencedOffer = offerRows.find(
-        (offer) => offer.id === validCandidate.data.counterOfferToId && offer.owner_user_id !== context.userId,
+        (offer) => offer.id === validCandidate.counterOfferToId && offer.owner_user_id !== context.userId,
       );
       if (!referencedOffer) return api(409, { error: "counter_offer_target_unavailable" });
     }
-    const option = options.find((item) => item.id === validCandidate.data.optionId) ?? null;
+    const option = draftOption
+      ? {
+          id: validCandidate.optionId,
+          activity: draftOption.activity,
+          startsAt: draftOption.startsAt,
+          estimatedCostCents: draftOption.estimatedCostCents,
+          activityTags: draftOption.activityTags,
+        }
+      : options.find((item) => item.id === validCandidate.optionId) ?? null;
     const eligibility = validateCandidate(
-      validCandidate.data,
+      validCandidate,
       context.userId,
       option,
       participants,
@@ -1001,36 +1061,70 @@ async function generateOffer(
       });
     }
     const offerId = crypto.randomUUID();
-    const created = await context.db.query<{ id: string }>(
-      `insert into offers
-        (id, outing_id, owner_user_id, option_id, activity, starts_at,
-         estimated_cost_cents, attendee_user_ids, activity_tags, private_note,
-         counter_offer_to_id, status)
-       select $1, o.id, $2, $3, $4, $5::timestamptz, $6, $7::jsonb,
-              $8::jsonb, $9, $10, 'draft'
-         from outings o
-        where o.id = $11 and o.ended_at is null
-          and exists (select 1 from participants p where p.outing_id = o.id
-                       and p.user_id = $2 and p.admission_status = 'admitted'
-                       and p.response_status = 'interested')
-       returning id`,
-      [offerId, context.userId, validCandidate.data.optionId, validCandidate.data.activity,
-        validCandidate.data.startsAt, validCandidate.data.estimatedCostCents,
-        JSON.stringify(validCandidate.data.attendeeUserIds),
-        JSON.stringify(validCandidate.data.activityTags), validCandidate.data.privateNote,
-        validCandidate.data.counterOfferToId, outing.id],
-    );
+    const created = draftOption
+      ? await context.db.query<{ id: string }>(
+          `with active_outing as materialized (
+             select o.id from outings o
+              where o.id = $1 and o.ended_at is null
+                and exists (select 1 from participants p where p.outing_id = o.id
+                             and p.user_id = $3 and p.admission_status = 'admitted'
+                             and p.response_status = 'interested')
+           ), inserted_option as (
+             insert into outing_options
+               (id, outing_id, created_by_user_id, title, activity, starts_at,
+                estimated_cost_cents, activity_tags, source, visibility)
+             select $2, o.id, $3, $4, $5, $6::timestamptz, $7, $8::jsonb, 'agent', 'private'
+               from active_outing o
+             returning id, outing_id
+           )
+           insert into offers
+             (id, outing_id, owner_user_id, option_id, activity, starts_at,
+              estimated_cost_cents, attendee_user_ids, activity_tags, private_note,
+              counter_offer_to_id, status)
+           select $9, option.outing_id, $3, option.id, $5, $6::timestamptz,
+                  $7, $10::jsonb, $8::jsonb, $11, $12, 'draft'
+             from inserted_option option
+           returning id`,
+          [outing.id, validCandidate.optionId, context.userId, draftOption.title,
+            validCandidate.activity, validCandidate.startsAt, validCandidate.estimatedCostCents,
+            JSON.stringify(validCandidate.activityTags), offerId,
+            JSON.stringify(validCandidate.attendeeUserIds), validCandidate.privateNote,
+            validCandidate.counterOfferToId],
+        )
+      : await context.db.query<{ id: string }>(
+          `insert into offers
+            (id, outing_id, owner_user_id, option_id, activity, starts_at,
+             estimated_cost_cents, attendee_user_ids, activity_tags, private_note,
+             counter_offer_to_id, status)
+           select $1, o.id, $2, $3, $4, $5::timestamptz, $6, $7::jsonb,
+                  $8::jsonb, $9, $10, 'draft'
+             from outings o
+            where o.id = $11 and o.ended_at is null
+              and exists (select 1 from participants p where p.outing_id = o.id
+                           and p.user_id = $2 and p.admission_status = 'admitted'
+                           and p.response_status = 'interested')
+              and exists (select 1 from outing_options option
+                           where option.id = $3 and option.outing_id = o.id
+                             and option.source in ('manual', 'agent')
+                             and option.visibility = 'shared')
+           returning id`,
+          [offerId, context.userId, validCandidate.optionId, validCandidate.activity,
+            validCandidate.startsAt, validCandidate.estimatedCostCents,
+            JSON.stringify(validCandidate.attendeeUserIds),
+            JSON.stringify(validCandidate.activityTags), validCandidate.privateNote,
+            validCandidate.counterOfferToId, outing.id],
+        );
     if (!created.length) return api(409, { error: "outing_not_active" });
     return api(201, {
       offer: {
         id: offerId,
-        optionId: validCandidate.data.optionId,
-        activity: validCandidate.data.activity,
-        startsAt: validCandidate.data.startsAt,
-        estimatedCostCents: validCandidate.data.estimatedCostCents,
-        attendeeUserIds: validCandidate.data.attendeeUserIds,
-        activityTags: validCandidate.data.activityTags,
-        privateNote: validCandidate.data.privateNote,
+        optionId: validCandidate.optionId,
+        activity: validCandidate.activity,
+        startsAt: validCandidate.startsAt,
+        estimatedCostCents: validCandidate.estimatedCostCents,
+        attendeeUserIds: validCandidate.attendeeUserIds,
+        activityTags: validCandidate.activityTags,
+        privateNote: validCandidate.privateNote,
       },
     });
   } catch (error) {
@@ -1046,6 +1140,33 @@ async function generateOffer(
         : {}),
     });
   }
+}
+
+async function loadRecentOwnerConversation(
+  db: Db,
+  outingId: string,
+  ownerUserId: string,
+): Promise<PrivateConversationMessage[]> {
+  const rows = await db.query<PrivateConversationMessage>(
+    `select role, content from messages
+      where outing_id = $1 and owner_user_id = $2
+        and ((role = 'user' and status in ('pending', 'replied', 'failed'))
+          or (role = 'agent' and status = 'complete'))
+      order by seq desc limit $3`,
+    [outingId, ownerUserId, RECENT_OFFER_CONVERSATION_MESSAGE_LIMIT],
+  );
+  let remainingChars = RECENT_OFFER_CONVERSATION_TOTAL_CHARS;
+  const recentNewestFirst: PrivateConversationMessage[] = [];
+  for (const row of rows) {
+    if (remainingChars <= 0) break;
+    const content = row.content.slice(
+      0,
+      Math.min(RECENT_OFFER_CONVERSATION_MESSAGE_CHARS, remainingChars),
+    );
+    recentNewestFirst.push({ role: row.role, content });
+    remainingChars -= content.length;
+  }
+  return recentNewestFirst.reverse();
 }
 
 async function publishOffer(
@@ -1064,12 +1185,32 @@ async function publishOffer(
   if (offer.status === "published") return api(200, { ok: true });
   if (offer.status !== "draft") return api(409, { error: "offer_not_available" });
   const validation = await validateStoredOffer(context.db, outingId, context.userId, offer);
-  if (!validation.ok) return api(409, { error: "offer_not_feasible", reason: validation.reason });
+  if (!validation.ok) {
+    return validation.reason === "option_unavailable"
+      ? api(409, { error: "option_unavailable" })
+      : api(409, { error: "offer_not_feasible", reason: validation.reason });
+  }
   const updated = await context.db.query<{ id: string }>(
-    `update offers set status = 'published', published_at = now()
-      where id = $1 and outing_id = $2 and owner_user_id = $3 and status = 'draft'
-        and exists (select 1 from outings where id = $2 and ended_at is null)
-      returning id`,
+    `with eligible as materialized (
+       select f.id, f.outing_id, f.option_id
+         from offers f
+         join outing_options o on o.id = f.option_id and o.outing_id = f.outing_id
+        where f.id = $1 and f.outing_id = $2 and f.owner_user_id = $3 and f.status = 'draft'
+          and o.source in ('manual', 'agent')
+          and (o.visibility = 'shared' or
+               (o.visibility = 'private' and o.source = 'agent' and o.created_by_user_id = $3))
+          and exists (select 1 from outings where id = $2 and ended_at is null)
+        for update of f, o
+     ), promoted as (
+       update outing_options o set visibility = 'shared'
+         from eligible e where o.id = e.option_id
+       returning o.id
+     )
+     update offers f set status = 'published', published_at = now()
+       from promoted p
+      where f.id = $1 and f.outing_id = $2 and f.owner_user_id = $3
+        and f.option_id = p.id and f.status = 'draft'
+      returning f.id`,
     [offerId, outingId, context.userId],
   );
   return updated.length ? api(200, { ok: true }) : api(409, { error: "offer_not_available" });
@@ -1082,10 +1223,19 @@ async function validateStoredOffer(
   row: OfferRow,
 ) {
   const optionRows = await db.query<OptionRow>(
-    `select id, title, activity, starts_at, estimated_cost_cents, activity_tags, source
+    `select id, title, activity, starts_at, estimated_cost_cents, activity_tags, source, visibility,
+            created_by_user_id
        from outing_options where id = $1 and outing_id = $2`,
     [row.option_id, outingId],
   );
+  const option = optionRows[0];
+  const optionIsPublished = option &&
+    (option.source === "manual" || option.source === "agent") && option.visibility === "shared";
+  const optionIsOwnDraft = option && row.status === "draft" && option.source === "agent" &&
+    option.visibility === "private" && option.created_by_user_id === ownerUserId;
+  if (!optionIsPublished && !optionIsOwnDraft) {
+    return { ok: false as const, reason: "option_unavailable" as const, versions: {} };
+  }
   const [participants, conditions] = await Promise.all([
     loadParticipants(db, outingId),
     loadConditionRows(db, outingId),
@@ -1203,7 +1353,10 @@ async function publishProposal(
     offer,
     attendeeUserIds,
   );
-  if (!eligibility.ok) return api(409, { error: eligibility.reason === "conditions_incomplete" ? "conditions_need_review" : "offer_not_feasible" });
+  if (!eligibility.ok) {
+    if (eligibility.reason === "option_unavailable") return api(409, { error: "option_unavailable" });
+    return api(409, { error: eligibility.reason === "conditions_incomplete" ? "conditions_need_review" : "offer_not_feasible" });
+  }
   if (new Date(candidate.startsAt) <= new Date()) return api(409, { error: "activity_already_started" });
   return createProposalRevision(context, outing, {
     optionId: offer.option_id,
@@ -2143,8 +2296,9 @@ async function validateCandidateForOption(
 
 async function loadOption(db: Db, outingId: string, optionId: string): Promise<OptionRow | null> {
   const rows = await db.query<OptionRow>(
-    `select id, title, activity, starts_at, estimated_cost_cents, activity_tags, source
-       from outing_options where id = $1 and outing_id = $2`,
+    `select id, title, activity, starts_at, estimated_cost_cents, activity_tags, source, visibility
+       from outing_options where id = $1 and outing_id = $2
+         and source in ('manual', 'agent') and visibility = 'shared'`,
     [optionId, outingId],
   );
   return rows[0] ?? null;
@@ -2176,7 +2330,7 @@ function optionAsCandidate(option: OptionRow, attendeeUserIds: string[]): OfferC
 
 async function tagsForOption(db: Db, optionId: string): Promise<string[]> {
   const rows = await db.query<{ activity_tags: unknown }>(
-    `select activity_tags from outing_options where id = $1`,
+    `select activity_tags from outing_options where id = $1 and visibility = 'shared'`,
     [optionId],
   );
   return rows[0] ? parseJsonValue(rows[0].activity_tags, [] as string[]) : [];

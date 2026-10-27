@@ -77,7 +77,8 @@ const BASE_SCHEMA = [
     starts_at timestamptz not null,
     estimated_cost_cents integer not null check (estimated_cost_cents >= 0),
     activity_tags jsonb not null default '[]'::jsonb,
-    source text not null check (source in ('sample', 'manual')),
+    source text not null check (source in ('sample', 'manual', 'agent')),
+    visibility text not null default 'shared' check (visibility in ('private', 'shared')),
     created_at timestamptz not null default now()
   )`,
   `create table if not exists offers (
@@ -303,6 +304,23 @@ begin
 end
 $im_in_if_migration_v3$`;
 
+const VERSION_4_MIGRATION = `
+do $im_in_if_migration_v4$
+begin
+  if not exists (select 1 from schema_migrations where version = 4) then
+    alter table outing_options
+      add column if not exists visibility text not null default 'shared';
+    alter table outing_options drop constraint if exists outing_options_source_check;
+    alter table outing_options
+      add constraint outing_options_source_check check (source in ('sample', 'manual', 'agent'));
+    alter table outing_options drop constraint if exists outing_options_visibility_check;
+    alter table outing_options
+      add constraint outing_options_visibility_check check (visibility in ('private', 'shared'));
+    insert into schema_migrations (version) values (4);
+  end if;
+end
+$im_in_if_migration_v4$`;
+
 export async function migrate(db: Db): Promise<void> {
   await db.transaction([
     { text: `select pg_advisory_xact_lock(87123562)` },
@@ -310,6 +328,7 @@ export async function migrate(db: Db): Promise<void> {
     { text: VERSIONED_MIGRATION },
     { text: VERSION_2_MIGRATION },
     { text: VERSION_3_MIGRATION },
+    { text: VERSION_4_MIGRATION },
   ]);
 }
 

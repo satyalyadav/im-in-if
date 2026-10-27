@@ -3,7 +3,6 @@ import {
   APICallError,
   generateText,
   InvalidToolInputError,
-  Output,
   RetryError,
   ToolChoiceViolationError,
   tool,
@@ -13,10 +12,12 @@ import { formatZonedDateTime } from "@/lib/cutoff";
 import { optionMeetsHardOptionConditions } from "@/lib/planning";
 import {
   ConditionInterpretationSchema,
+  NewOfferOptionSchema,
   OfferCandidateSchema,
+  OfferGenerationResultSchema,
   type CatalogOption,
   type ConditionInterpretation,
-  type OfferCandidate,
+  type OfferGenerationResult,
   type PublicOffer,
   type PublicParticipant,
 } from "@/lib/planning-types";
@@ -57,6 +58,11 @@ export type AgentTurnInput = {
   sessionId?: string;
 };
 
+export type PrivateConversationMessage = {
+  role: "user" | "agent";
+  content: string;
+};
+
 const AgentConditionUpdateSchema = z.object({
   hard: z.object({
     availableWindows: ConditionInterpretationSchema.shape.hard.shape.availableWindows,
@@ -77,10 +83,22 @@ const AgentReplySchema = z.object({
   conditionUpdate: AgentConditionUpdateSchema.nullable(),
 }).strict();
 
+const PrivatePlanOfferToolSchema = z.object({
+  kind: z.enum(["existing_option", "new_option", "clarification"]),
+  optionId: z.string().uuid().nullable(),
+  option: NewOfferOptionSchema.nullable(),
+  attendeeUserIds: z.array(z.string().min(1).max(128)).max(20),
+  counterOfferToId: z.string().uuid().nullable(),
+  privateNote: z.string().trim().max(1_000),
+  question: z.string().trim().min(1).max(400).nullable(),
+}).strict();
+
 export type AgentReply = {
   text: string;
   conditionUpdate?: AgentConditionUpdate | null;
 };
+
+type PrivatePlanOfferToolReply = z.infer<typeof PrivatePlanOfferToolSchema>;
 
 export type OfferGenerationInput = {
   outing: AgentOutingContext;
@@ -88,6 +106,7 @@ export type OfferGenerationInput = {
   participantUserId: string;
   privateInput: string;
   privateConditions: ConditionInterpretation;
+  recentConversation: PrivateConversationMessage[];
   privateRankings: string[];
   options: CatalogOption[];
   participants: PublicParticipant[];
@@ -100,9 +119,65 @@ export type OfferGenerationInput = {
   };
 };
 
+function invalidOfferToolOutput(): AgentError {
+  return new AgentError("invalid_output", "model returned invalid structured output");
+}
+
+function normalizeOfferToolReply(
+  input: unknown,
+  compatibleOptions: CatalogOption[],
+): OfferGenerationResult {
+  const parsed = PrivatePlanOfferToolSchema.safeParse(input);
+  if (!parsed.success) throw invalidOfferToolOutput();
+  const reply: PrivatePlanOfferToolReply = parsed.data;
+
+  if (reply.kind === "existing_option") {
+    if (
+      !reply.optionId || reply.option !== null || reply.question !== null ||
+      reply.attendeeUserIds.length === 0
+    ) throw invalidOfferToolOutput();
+    const option = compatibleOptions.find((candidate) => candidate.id === reply.optionId);
+    if (!option) throw invalidOfferToolOutput();
+    const candidate = OfferCandidateSchema.safeParse({
+      optionId: option.id,
+      activity: option.activity,
+      startsAt: option.startsAt,
+      estimatedCostCents: option.estimatedCostCents,
+      activityTags: option.activityTags,
+      attendeeUserIds: reply.attendeeUserIds,
+      counterOfferToId: reply.counterOfferToId,
+      privateNote: reply.privateNote,
+    });
+    if (!candidate.success) throw invalidOfferToolOutput();
+    return candidate.data;
+  }
+
+  if (reply.kind === "new_option") {
+    if (
+      reply.optionId !== null || !reply.option || reply.question !== null ||
+      reply.attendeeUserIds.length === 0
+    ) throw invalidOfferToolOutput();
+    const result = OfferGenerationResultSchema.safeParse({
+      kind: "new_option",
+      option: reply.option,
+      attendeeUserIds: reply.attendeeUserIds,
+      counterOfferToId: reply.counterOfferToId,
+      privateNote: reply.privateNote,
+    });
+    if (!result.success) throw invalidOfferToolOutput();
+    return result.data;
+  }
+
+  if (
+    reply.optionId !== null || reply.option !== null || reply.attendeeUserIds.length !== 0 ||
+    reply.counterOfferToId !== null || reply.privateNote !== "" || !reply.question
+  ) throw invalidOfferToolOutput();
+  return { kind: "clarification", question: reply.question };
+}
+
 export interface Agent {
   reply(input: AgentTurnInput): Promise<AgentReply>;
-  generateOffer?(input: OfferGenerationInput): Promise<OfferCandidate>;
+  generateOffer?(input: OfferGenerationInput): Promise<OfferGenerationResult>;
 }
 
 export type OpenCodeGoAgentConfig = {
@@ -113,8 +188,6 @@ export type OpenCodeGoAgentConfig = {
 };
 
 export const ACTIVE_GO_MODEL = "deepseek-v4.1-flash";
-
-const OfferSchema = OfferCandidateSchema;
 
 function systemPrompt(input: AgentTurnInput): string {
   const cutoff = formatZonedDateTime(
@@ -318,34 +391,6 @@ export function getSafeAgentFailureDiagnostic(error: unknown): SafeAgentFailureD
   return { errorClass };
 }
 
-function normalizedJson<T>(text: string, schema: z.ZodType<T>): T {
-  let trimmed = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
-  if (!trimmed) {
-    throw new AgentError("empty_reply", "model returned no text");
-  }
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
-    const start = trimmed.indexOf("{");
-    const end = trimmed.lastIndexOf("}");
-    if (start >= 0 && end > start) trimmed = trimmed.slice(start, end + 1);
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch (error) {
-    throw new AgentError("invalid_output", "model returned invalid structured output", {
-      cause: error,
-    });
-  }
-  const result = schema.safeParse(parsed);
-  if (!result.success) {
-    throw new AgentError(
-      "invalid_output",
-      JSON.stringify(result.error.issues.map((issue) => issue.path.join("."))),
-    );
-  }
-  return result.data;
-}
-
 type ProviderOptions = {
   name: string;
   config: OpenCodeGoAgentConfig;
@@ -440,32 +485,6 @@ function createAgent(options: ProviderOptions): Agent {
     return provider.chatModel(config.model);
   }
 
-  async function generateStructured<T>(
-    sessionId: string | undefined,
-    schema: z.ZodType<T>,
-    prompt: string,
-  ): Promise<T> {
-    try {
-      const result = await generateText({
-        model: modelFor(sessionId),
-        output: Output.text(),
-        prompt,
-        abortSignal: timeout(),
-        maxRetries: 0,
-        maxOutputTokens: 4000,
-        providerOptions: OPENCODE_GO_PROVIDER_OPTIONS,
-      });
-      return normalizedJson(result.text, schema);
-    } catch (error) {
-      const providerError = findAgentError(error);
-      if (providerError) throw providerError;
-      if (isAbort(error)) {
-        throw new AgentError("timeout", "model request timed out", { cause: error });
-      }
-      throw new AgentError("model_error", "model request failed", { cause: error });
-    }
-  }
-
   return {
     async reply(input) {
       try {
@@ -511,11 +530,9 @@ function createAgent(options: ProviderOptions): Agent {
 
     async generateOffer(input) {
       const compatibleOptions = input.options.filter((option) =>
+        option.source !== "sample" &&
         optionMeetsHardOptionConditions(option, input.privateConditions.hard),
       );
-      if (compatibleOptions.length === 0) {
-        throw new AgentError("no_feasible_options");
-      }
       const localizedOptions = compatibleOptions.map((option) => ({
         ...option,
         startsAtLocal: formatZonedDateTime(
@@ -524,16 +541,30 @@ function createAgent(options: ProviderOptions): Agent {
         ),
         timeZone: input.outing.cutoffTimeZone,
       }));
+      const localizedOwnerWindows = input.privateConditions.hard.availableWindows.map((window) => ({
+        ...window,
+        startsAtLocal: formatZonedDateTime(new Date(window.startsAt), input.outing.cutoffTimeZone),
+        endsAtLocal: formatZonedDateTime(new Date(window.endsAt), input.outing.cutoffTimeZone),
+        timeZone: input.outing.cutoffTimeZone,
+      }));
       const prompt = [
         "Create one tentative plan offer for your owner. This is not a confirmation.",
-        "Return one JSON object with exactly these fields: optionId, activity, startsAt, estimatedCostCents, activityTags, attendeeUserIds, counterOfferToId (UUID or null), privateNote.",
-        "Choose only a supplied catalog option and copy its exact optionId, activity, canonical startsAt ISO instant, estimatedCostCents, and activityTags. Include your owner in attendeeUserIds. Use only participants whose responseStatus is interested. Do not change strict conditions.",
-        "Every supplied catalog option has already passed your owner's hard availability, budget, and activity-tag checks. Do not claim a supplied option violates those checks. Use its startsAtLocal and timeZone for plain-language time descriptions. Do not infer other participants' private conditions.",
-        "Use only your owner's private conditions and rankings, the public catalog, participant names, resolved tie result, and approved shared offers below. A counterOfferToId must name a supplied shared offer owned by another participant, or be null. Do not disclose your privateNote to other people.",
+        "Call private_plan_offer exactly once. Its object requires kind, optionId, option, attendeeUserIds, counterOfferToId, privateNote, and question on every call.",
+        "For an existing catalog choice, set kind='existing_option', optionId to one supplied catalog UUID, option=null, question=null, and include attendees, counterOfferToId, and privateNote. The application copies the chosen option's canonical activity, time, cost, and tags.",
+        "For a new choice, set kind='new_option', optionId=null, option to a new option object with title, activity, startsAt, estimatedCostCents, and activityTags, and question=null. For a clarification, set kind='clarification', optionId=null, option=null, attendeeUserIds=[], counterOfferToId=null, privateNote='', and ask one focused question.",
+        "Use a supplied public catalog option only when its activity fits the outing suggestion and the owner's private input and preferences, as well as the hard conditions. Otherwise draft a relevant generic option or ask one focused clarification. Do not replace the suggested activity with an unrelated activity; for example, never offer a movie when the idea is sushi.",
+        "Include your owner in attendeeUserIds. Use only participants whose responseStatus is interested. Do not change strict conditions. Other participants' conditions are checked after your answer, but their private details are not available to you.",
+        "Every supplied catalog option has already passed your owner's hard availability, budget, and activity-tag checks. Do not claim a supplied option violates those checks. Use its startsAtLocal and timeZone for plain-language time descriptions.",
+        "For a new option, use an owner-provided date and time or fit a dated window from Owner availability windows below. Return startsAt as an ISO instant in the outing time zone. The response cutoff is not the activity date. If the activity or date/time cannot be chosen from the supplied details without guessing, return one focused clarification instead of an option.",
+        "A new option's estimatedCostCents is a generic per-person estimate, not a checked price or quote. Do not claim live restaurant availability, a booking, or a reservation. Do not put verified prices or booking claims in privateNote.",
+        "Use only the owner's private conditions and rankings, the public catalog, participant names, resolved tie result, and approved shared offers below. A counterOfferToId must name a supplied shared offer owned by another participant, or be null. Do not disclose your privateNote to other people.",
         `Outing suggestion: ${JSON.stringify(input.outing.suggestion)}`,
         `Your user ID: ${JSON.stringify(input.participantUserId)}`,
         `Your private planning input: ${JSON.stringify(input.privateInput)}`,
         `Your private hard conditions and flexible preferences: ${JSON.stringify(input.privateConditions)}`,
+        "Recent owner messages are in chronological order. Follow the owner's latest explicit user messages about activity and venue over older user messages and the initial suggestion. Treat only the current structured condition state above as hard limits; chat does not create or relax hard limits without the existing owner condition-update flow.",
+        `Recent private owner conversation: ${JSON.stringify(input.recentConversation)}`,
+        `Owner availability windows: ${JSON.stringify(localizedOwnerWindows)}`,
         `Your private option rankings: ${JSON.stringify(input.privateRankings)}`,
         `Catalog options: ${JSON.stringify(localizedOptions)}`,
         `Admitted interested participants: ${JSON.stringify(input.participants)}`,
@@ -546,7 +577,37 @@ function createAgent(options: ProviderOptions): Agent {
             ]
           : []),
       ].join("\n");
-      return generateStructured(input.sessionId, OfferSchema, prompt);
+      try {
+        const result = await generateText({
+          model: modelFor(input.sessionId),
+          prompt,
+          tools: {
+            private_plan_offer: tool({
+              description: "Select a compatible outing option, draft a new private option, or ask a focused clarification using the complete required fields.",
+              inputSchema: PrivatePlanOfferToolSchema,
+            }),
+          },
+          toolChoice: { type: "tool", toolName: "private_plan_offer" },
+          abortSignal: timeout(),
+          maxRetries: 0,
+          maxOutputTokens: 4000,
+          providerOptions: OPENCODE_GO_PROVIDER_OPTIONS,
+        });
+        if (result.toolCalls.length !== 1 || result.toolCalls[0].toolName !== "private_plan_offer") {
+          throw invalidOfferToolOutput();
+        }
+        return normalizeOfferToolReply(result.toolCalls[0].input, compatibleOptions);
+      } catch (error) {
+        const providerError = findAgentError(error);
+        if (providerError) throw providerError;
+        if (isInvalidToolReply(error)) {
+          throw new AgentError("invalid_output", "model returned invalid structured output", { cause: error });
+        }
+        if (isAbort(error)) {
+          throw new AgentError("timeout", "model request timed out", { cause: error });
+        }
+        throw new AgentError("model_error", "model request failed", { cause: error });
+      }
     },
   };
 }

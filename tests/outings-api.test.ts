@@ -1,6 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveCutoffInstant } from "@/lib/cutoff";
 import {
   AgentError,
   type Agent,
@@ -151,63 +150,20 @@ describe("starting an outing", () => {
     expect(response.body.error).toBe("nonexistent_local_time");
   });
 
-  it.each([
-    {
-      zoneName: "Phoenix",
-      cutoffDate: "2026-10-27",
-      cutoffTime: "16:00",
-      sampleDate: "2026-10-28",
-      timeZone: "America/Phoenix",
-    },
-    {
-      zoneName: "New York after the spring DST transition",
-      cutoffDate: "2026-03-07",
-      cutoffTime: "16:00",
-      sampleDate: "2026-03-08",
-      timeZone: "America/New_York",
-    },
-    {
-      zoneName: "Berlin after the spring DST transition",
-      cutoffDate: "2026-03-28",
-      cutoffTime: "16:00",
-      sampleDate: "2026-03-29",
-      timeZone: "Europe/Berlin",
-    },
-  ])("seeds sample options at their labeled local times in $zoneName", async ({
-    cutoffDate,
-    cutoffTime,
-    sampleDate,
-    timeZone,
-  }) => {
+  it("does not add movie options to a sushi outing", async () => {
     const response = await createOuting(ctx(new FakeAgent()), {
-      suggestion: "Dinner together?",
-      cutoffDate,
-      cutoffTime,
-      cutoffTimeZone: timeZone,
+      suggestion: "Sushi with Starter, Dan, and Jolly",
+      cutoffDate: "2026-10-31",
+      cutoffTime: "19:30",
+      cutoffTimeZone: "America/Phoenix",
     });
     expect(response.status).toBe(201);
     const outingId = (response.body.outing as { id: string }).id;
-    const samples = await db.query<{
-      title: string;
-      starts_at: string | Date;
-      source: string;
-    }>(
-      `select title, starts_at, source from outing_options
-        where outing_id = $1 order by starts_at`,
+    const options = await db.query<{ title: string; activity: string; source: string }>(
+      `select title, activity, source from outing_options where outing_id = $1`,
       [outingId],
     );
-    const expectedTimes = ["19:00", "20:00"].map((time) => {
-      const resolved = resolveCutoffInstant({ date: sampleDate, time, timeZone });
-      expect(resolved.ok).toBe(true);
-      return resolved.ok ? resolved.instant.toISOString() : null;
-    });
-
-    expect(samples.map((sample) => sample.title)).toEqual([
-      "Sample: film night at 7 PM",
-      "Sample: film night at 8 PM",
-    ]);
-    expect(samples.map((sample) => new Date(sample.starts_at).toISOString())).toEqual(expectedTimes);
-    expect(samples.map((sample) => sample.source)).toEqual(["sample", "sample"]);
+    expect(options).toEqual([]);
   });
 });
 
@@ -764,6 +720,14 @@ describe("private agent turns", () => {
       conditionUpdate: agentConditions({ maxCostCents: 1500 }),
     }));
     const outingId = await makeOuting(agent);
+    await db.query(
+      `insert into outing_options
+        (id, outing_id, created_by_user_id, title, activity, starts_at,
+         estimated_cost_cents, activity_tags, source)
+       values ($1, $2, $3, 'Synthetic movie option', 'Movie', '2026-11-02T02:00:00Z',
+               900, '["movie"]', 'manual')`,
+      [crypto.randomUUID(), outingId, STARTER],
+    );
     const option = await db.query<{ id: string; activity: string; starts_at: string | Date; estimated_cost_cents: number }>(
       `select id, activity, starts_at, estimated_cost_cents from outing_options
         where outing_id = $1 order by starts_at limit 1`, [outingId],

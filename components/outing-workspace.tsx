@@ -50,7 +50,7 @@ export type Workspace = {
   myResponseStatus: string;
   messages: MessageView[];
   offers: PublicOffer[];
-  myDraftOffers: Array<PublicOffer & { privateNote: string }>;
+  myDraftOffers: Array<PublicOffer & { optionTitle: string; privateNote: string }>;
   proposal: ProposalView | null;
   myProposalApproved: boolean;
   confirmedProposal: ProposalView | null;
@@ -88,11 +88,13 @@ type ActionRunner = (action: Action) => Promise<boolean>;
 const ERROR_COPY: Record<string, string> = {
   agent_unavailable: "Your agent is not available on this deployment.",
   usage_not_included: "The provider did not confirm zero-cost Go usage. No response was accepted.",
-  clarification_required: "Answer the follow-up in your private chat before continuing.",
   conditions_need_review: "Tell your agent what would make this outing work before responding.",
   confirmed_conditions_locked: "Conditions are locked for the confirmed plan. Request to leave if it no longer works for you.",
   response_cutoff_passed: "The response cutoff has passed.",
   offer_not_feasible: "That offer conflicts with one or more strict conditions.",
+  option_unavailable: "That draft uses an option that is no longer available. Ask your agent for a new offer or add a manual option.",
+  no_options: "Add an option with a date, time, and estimated cost, or ask your agent to draft one from your private chat.",
+  clarification_required: "Answer the question in your private chat, then ask your agent for an offer again.",
   tie_options_not_feasible: "Both options must satisfy every attendee's strict conditions.",
   proposal_expired: "This proposal expired without reshuffling the attendee list.",
   proposal_not_current: "This proposal was replaced by a newer revision.",
@@ -179,8 +181,8 @@ function CatalogPanel({ workspace, busy, act }: { workspace: Workspace; busy: bo
     <section className="planner-card" aria-labelledby="catalog-title">
       <p className="playbill-kicker">Shared options</p>
       <h2 id="catalog-title">The catalog</h2>
-      <p className="planner-help">Labeled samples are examples only. Add a real option or rank what suits you.</p>
-      {workspace.options.length === 0 ? <p className="empty-light">No options yet. Add a manual option to start comparing.</p> : null}
+      <p className="planner-help">Add a shared option that fits this outing, or ask your agent to draft one from your private chat.</p>
+      {workspace.options.length === 0 ? <p className="empty-light">No shared options yet. Your agent can draft one privately, or you can add a manual option for the group.</p> : null}
       <ol className="option-list">
         {ordered.map((option) => {
           const rank = workspace.myRankings.indexOf(option.id);
@@ -188,9 +190,9 @@ function CatalogPanel({ workspace, busy, act }: { workspace: Workspace; busy: bo
             <li className="option-card" key={option.id}>
               <div className="option-heading">
                 <div><h3>{option.title}</h3><p>{option.activity}</p></div>
-                <span className={`source-tag source-${option.source}`}>{option.source === "sample" ? "Sample" : "Manual"}</span>
+                <span className="source-tag source-manual">{option.source === "agent" ? "Agent drafted" : "Manual"}</span>
               </div>
-              <p className="option-meta">{dateTime(option.startsAt, workspace.outing.cutoffTimeZone)} · {money(option.estimatedCostCents)}</p>
+              <p className="option-meta">{dateTime(option.startsAt, workspace.outing.cutoffTimeZone)} · Estimated {money(option.estimatedCostCents)} per person</p>
               {option.activityTags.length ? <p className="tag-list">{option.activityTags.join(" · ")}</p> : null}
               <div className="rank-actions">
                 {rank < 0 ? (
@@ -236,7 +238,7 @@ function OfferPanel({ workspace, busy, act }: { workspace: Workspace; busy: bool
       <h2 id="offers-title">Offers from the group</h2>
       <p className="planner-help">Offers are suggestions. Only you can publish your draft, and only people can approve a final proposal.</p>
       {workspace.myConditionsReady && workspace.myResponseStatus === "interested" ? (
-        <PlannerButton disabled={busy || workspace.options.length === 0} onClick={() => void act({ action: "generate_offer" })}>
+        <PlannerButton disabled={busy} onClick={() => void act({ action: "generate_offer" })}>
           Ask agent for an offer
         </PlannerButton>
       ) : <p className="empty-light">Tell your agent what would make this outing work, then choose “I’m interested” to draft an offer.</p>}
@@ -244,8 +246,9 @@ function OfferPanel({ workspace, busy, act }: { workspace: Workspace; busy: bool
       {workspace.myDraftOffers.map((offer) => (
         <article className="offer-card offer-private" key={offer.id}>
           <p className="playbill-kicker">Your private draft</p>
-          <h3>{offer.activity}</h3>
-          <p>{dateTime(offer.startsAt, workspace.outing.cutoffTimeZone)} · {money(offer.estimatedCostCents)}</p>
+          <h3>{offer.optionTitle}</h3>
+          <p>{offer.activity}</p>
+          <p>{dateTime(offer.startsAt, workspace.outing.cutoffTimeZone)} · Estimated {money(offer.estimatedCostCents)} per person</p>
           {offer.privateNote ? <p className="private-note">Only you see this note: {offer.privateNote}</p> : null}
           <PlannerButton disabled={busy} onClick={() => void act({ action: "publish_offer", offerId: offer.id })}>Publish this offer</PlannerButton>
         </article>
@@ -259,7 +262,7 @@ function OfferPanel({ workspace, busy, act }: { workspace: Workspace; busy: bool
               <article className="offer-card" key={offer.id}>
                 <p className="playbill-kicker">Offer from {owner?.displayName ?? "a participant"}</p>
                 <h3>{offer.activity}</h3>
-                <p>{dateTime(offer.startsAt, workspace.outing.cutoffTimeZone)} · {money(offer.estimatedCostCents)}</p>
+                <p>{dateTime(offer.startsAt, workspace.outing.cutoffTimeZone)} · Estimated {money(offer.estimatedCostCents)} per person</p>
                 {offer.counterOfferToId ? (
                   <p className="hint dark-hint">
                     Counteroffer to {workspace.offers.find((item) => item.id === offer.counterOfferToId)?.activity ?? "a published offer"}
@@ -293,7 +296,7 @@ function AgreementPanel({ workspace, busy, act }: { workspace: Workspace; busy: 
         <article className="proposal-card" aria-label={`Proposal revision ${proposal.revision}`}>
           <p className="playbill-kicker">Revision {proposal.revision} · Confirm before {dateTime(proposal.expiresAt, workspace.outing.cutoffTimeZone)}</p>
           <h3>{proposal.activity}</h3>
-          <p>{dateTime(proposal.startsAt, workspace.outing.cutoffTimeZone)} · {money(proposal.estimatedCostCents)}</p>
+          <p>{dateTime(proposal.startsAt, workspace.outing.cutoffTimeZone)} · Estimated {money(proposal.estimatedCostCents)} per person</p>
           <p>{proposal.attendeeUserIds.length} proposed attendee{proposal.attendeeUserIds.length === 1 ? "" : "s"} · {proposal.approvalCount} approval{proposal.approvalCount === 1 ? "" : "s"}</p>
           <p className="hint dark-hint">Attendees: {proposal.attendeeUserIds.map((id) => workspace.participants.find((person) => person.userId === id)?.displayName ?? "A participant").join(", ")}</p>
           {proposal.attendeeUserIds.includes(workspace.participants.find((p) => p.userId)?.userId ?? "") ? null : null}
@@ -316,7 +319,7 @@ function AgreementPanel({ workspace, busy, act }: { workspace: Workspace; busy: 
         <article className="proposal-card proposal-confirmed">
           <p className="playbill-kicker">Confirmed plan</p>
           <h3>{confirmedProposal.activity}</h3>
-          <p>{dateTime(confirmedProposal.startsAt, workspace.outing.cutoffTimeZone)} · {money(confirmedProposal.estimatedCostCents)}</p>
+          <p>{dateTime(confirmedProposal.startsAt, workspace.outing.cutoffTimeZone)} · Estimated {money(confirmedProposal.estimatedCostCents)} per person</p>
           <p className="hint dark-hint">Attendees: {confirmedProposal.attendeeUserIds.map((id) => workspace.participants.find((person) => person.userId === id)?.displayName ?? "A participant").join(", ")}</p>
           <p>Everyone on this roster approved revision {confirmedProposal.revision}.</p>
           {!confirmedProposal.attendeeUserIds.includes(workspace.viewerUserId) ? (
@@ -445,9 +448,11 @@ export function OutingWorkspace({ initialWorkspace }: { initialWorkspace: Worksp
         headers: { "content-type": "application/json" },
         body: JSON.stringify(action),
       });
-      const data = await response.json().catch(() => null) as (Workspace & { error?: string }) | null;
+      const data = await response.json().catch(() => null) as (Workspace & { error?: string; question?: string }) | null;
       if (!response.ok) {
-        setError(errorText(data?.error ?? "unknown"));
+        setError(data?.error === "clarification_required" && data.question
+          ? `${data.question} Reply in your private chat, then ask your agent again.`
+          : errorText(data?.error ?? "unknown"));
         if (response.status === 409) void refresh();
         return false;
       }
