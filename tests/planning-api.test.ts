@@ -1,6 +1,6 @@
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type Agent, type AgentTurnInput, type OfferGenerationInput } from "@/lib/agent";
+import { AgentError, type Agent, type AgentTurnInput, type OfferGenerationInput } from "@/lib/agent";
 import { createPgliteDb, migrate, type Db } from "@/lib/db";
 import { createOuting, getOuting, sendMessage } from "@/lib/outings-api";
 import {
@@ -22,6 +22,7 @@ class FakeAgent implements Agent {
   calls: AgentTurnInput[] = [];
   offerCalls: OfferGenerationInput[] = [];
   candidate: OfferCandidate | null = null;
+  offerError: AgentError | null = null;
 
   async reply(input: AgentTurnInput) {
     this.calls.push(structuredClone(input));
@@ -30,6 +31,7 @@ class FakeAgent implements Agent {
 
   async generateOffer(input: OfferGenerationInput) {
     this.offerCalls.push(structuredClone(input));
+    if (this.offerError) throw this.offerError;
     if (!this.candidate) throw new Error("test candidate not configured");
     return structuredClone(this.candidate);
   }
@@ -320,6 +322,42 @@ describe("email preference and manual option actions", () => {
 });
 
 describe("model-generated offer boundary", () => {
+  it("returns the existing not-feasible error when the owner's catalog has no compatible options", async () => {
+    const outing = await makeOuting();
+    await admit(outing.id, outing.inviteToken, GUEST, "guest@example.test");
+    const interpretation = emptyConditionInterpretation();
+    interpretation.hard.availableWindows = [{
+      startsAt: "2026-11-01T02:01:00.000Z",
+      endsAt: "2026-11-01T06:00:00.000Z",
+    }];
+    await db.query(
+      `update participant_preferences set interpretation = $3::jsonb, interpretation_ready = true
+        where outing_id = $1 and user_id = $2`,
+      [outing.id, GUEST, JSON.stringify(interpretation)],
+    );
+    await db.query(
+      `update participants set response_status = 'interested' where outing_id = $1 and user_id = $2`,
+      [outing.id, GUEST],
+    );
+    const agent = new FakeAgent();
+    agent.offerError = new AgentError("no_feasible_options");
+
+    const response = await handlePlanningAction(
+      context(GUEST),
+      outing.id,
+      { action: "generate_offer" },
+      () => agent,
+    );
+
+    expect(response).toEqual({ status: 409, body: { error: "offer_not_feasible" } });
+    expect(agent.offerCalls).toHaveLength(1);
+    const drafts = await db.query<{ id: string }>(
+      `select id from offers where outing_id = $1 and owner_user_id = $2 and status = 'draft'`,
+      [outing.id, GUEST],
+    );
+    expect(drafts).toHaveLength(0);
+  });
+
   it("passes only the owner's private data and rejects model output that violates hard limits", async () => {
     const outing = await makeOuting();
     await admit(outing.id, outing.inviteToken, GUEST, "guest@example.test");
@@ -371,9 +409,40 @@ describe("model-generated offer boundary", () => {
       privateNote: "GUEST-ONLY OFFER NOTE",
     };
     const factory = () => agent;
-    const rejected = await handlePlanningAction(context(GUEST), outing.id, { action: "generate_offer" }, factory);
-    expect(rejected.status).toBe(409);
-    expect(rejected.body.error).toBe("offer_not_feasible");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let rejected: Awaited<ReturnType<typeof handlePlanningAction>>;
+    let warningCalls: unknown[][] = [];
+    try {
+      rejected = await handlePlanningAction(context(GUEST), outing.id, { action: "generate_offer" }, factory);
+      warningCalls = warning.mock.calls.map((call) => [...call]);
+    } finally {
+      warning.mockRestore();
+    }
+    expect(rejected).toEqual({
+      status: 409,
+      body: { error: "offer_not_feasible", reason: "condition_conflict" },
+    });
+    expect(warningCalls).toEqual([[
+      "[offer-candidate-ineligible]",
+      "condition_conflict",
+    ]]);
+    const diagnosticText = JSON.stringify({ body: rejected.body, logs: warningCalls });
+    for (const privateValue of [
+      outing.id,
+      STARTER,
+      GUEST,
+      "GUEST PRIVATE BUDGET",
+      "STARTER MUST STAY PRIVATE",
+      "GUEST-ONLY OFFER NOTE",
+      "SHARED SECRET NOTE",
+    ]) {
+      expect(diagnosticText).not.toContain(privateValue);
+    }
+    const failedDrafts = await db.query<{ id: string }>(
+      `select id from offers where outing_id = $1 and owner_user_id = $2 and status = 'draft'`,
+      [outing.id, GUEST],
+    );
+    expect(failedDrafts).toHaveLength(0);
     expect(agent.offerCalls).toHaveLength(1);
     const modelInput = JSON.stringify(agent.offerCalls[0]);
     expect(modelInput).toContain("GUEST PRIVATE BUDGET");

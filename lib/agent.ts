@@ -10,6 +10,7 @@ import {
 } from "ai";
 import { z } from "zod";
 import { formatZonedDateTime } from "@/lib/cutoff";
+import { optionMeetsHardOptionConditions } from "@/lib/planning";
 import {
   ConditionInterpretationSchema,
   OfferCandidateSchema,
@@ -26,7 +27,8 @@ export type AgentErrorCode =
   | "empty_reply"
   | "invalid_output"
   | "usage_not_included"
-  | "unavailable";
+  | "unavailable"
+  | "no_feasible_options";
 
 export class AgentError extends Error {
   constructor(
@@ -202,7 +204,81 @@ export type SafeAgentFailureDiagnostic = {
     | "UnknownError";
   statusCode?: number;
   retryable?: boolean;
+  category?: SafeAgentFailureCategory;
 };
+
+export type SafeAgentFailureCategory =
+  | "missing_session"
+  | "tool_choice_or_schema"
+  | "invalid_request_parameters"
+  | "context_length"
+  | "authentication"
+  | "rate_or_usage_limit"
+  | "upstream_error"
+  | "unknown";
+
+function providerErrorFields(value: unknown, depth = 0): string[] {
+  if (depth > 3) return [];
+  if (typeof value === "string") return [value.slice(0, 2048)];
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) {
+    return value.slice(0, 10).flatMap((item) => providerErrorFields(item, depth + 1));
+  }
+
+  const record = value as Record<string, unknown>;
+  const fields: string[] = [];
+  for (const key of ["code", "type", "message", "param"]) {
+    if (typeof record[key] === "string") fields.push((record[key] as string).slice(0, 2048));
+  }
+  for (const key of ["error", "details"]) {
+    if (record[key] !== undefined) fields.push(...providerErrorFields(record[key], depth + 1));
+  }
+  return fields;
+}
+
+function providerFailureCategory(error: APICallError): SafeAgentFailureCategory {
+  const fields = [error.message.slice(0, 4096)];
+  if (error.responseBody) {
+    fields.push(error.responseBody.slice(0, 4096));
+    if (error.responseBody.length <= 16_384) {
+      try {
+        fields.push(...providerErrorFields(JSON.parse(error.responseBody)));
+      } catch {
+        // The bounded raw text still supports safe category matching below.
+      }
+    }
+  }
+  if (error.data !== undefined) fields.push(...providerErrorFields(error.data));
+  const details = fields.map((field) => field.toLowerCase().replace(/[_-]+/g, " "));
+  const has = (pattern: RegExp) => details.some((detail) => pattern.test(detail));
+  const statusCode = error.statusCode;
+
+  if (
+    has(/\b(?:session|conversation)(?: id)?(?: is| was)? (?:not found|unknown|missing|invalid|expired|does not exist|not recognized)\b|\b(?:not found|unknown|missing|invalid|expired)(?: for| of)? (?:the )?(?:session|conversation)\b|\b(?:invalid|unknown|missing|expired) session(?: id)?\b/)
+  ) return "missing_session";
+  if (
+    statusCode === 401 || statusCode === 403 ||
+    has(/\b(?:unauthorized|forbidden|authentication|invalid (?:api|access) key|api key)\b/)
+  ) return "authentication";
+  if (
+    statusCode === 429 ||
+    has(/\b(?:rate limit|too many requests|quota|usage limit|billing|insufficient credits|credit balance)\b/)
+  ) return "rate_or_usage_limit";
+  if (
+    has(/\b(?:context(?: window)? (?:length|limit)|maximum context|context length exceeded|too many tokens|token limit)\b|\b(?:prompt|input).{0,40}\b(?:too long|too large|exceed(?:ed)?)\b/)
+  ) return "context_length";
+  if (
+    has(/\btool choice\b|\btools?\b.{0,60}\b(?:unsupported|not supported|invalid|unavailable|unknown)\b|\b(?:unsupported|not supported|invalid|unavailable|unknown)\b.{0,60}\btools?\b|\bfunction call\b|\bjson ?schema\b|\bschema\b.{0,60}\b(?:invalid|unsupported|not supported)\b/)
+  ) return "tool_choice_or_schema";
+  if (
+    statusCode === 400 || statusCode === 422 ||
+    has(/\b(?:bad request|invalid request|invalid parameter|invalid argument)\b/)
+  ) return "invalid_request_parameters";
+  if (statusCode === 408 || statusCode === 409 || (statusCode !== undefined && statusCode >= 500)) {
+    return "upstream_error";
+  }
+  return "unknown";
+}
 
 export function getSafeAgentFailureDiagnostic(error: unknown): SafeAgentFailureDiagnostic {
   const pending: unknown[] = [error];
@@ -222,6 +298,7 @@ export function getSafeAgentFailureDiagnostic(error: unknown): SafeAgentFailureD
           ? { statusCode }
           : {}),
         retryable: current.isRetryable,
+        category: providerFailureCategory(current),
       };
     }
     if (RetryError.isInstance(current)) {
@@ -277,6 +354,14 @@ type ProviderOptions = {
 };
 
 const APP_USER_AGENT = "im-in-if/0.1.0";
+const OPENCODE_GO_PROVIDER_NAME = "opencode-go";
+// The OpenAI-compatible adapter maps hyphenated provider names to camel case.
+const OPENCODE_GO_PROVIDER_OPTIONS_NAMESPACE = "opencodeGo";
+const OPENCODE_GO_PROVIDER_OPTIONS = {
+  [OPENCODE_GO_PROVIDER_OPTIONS_NAMESPACE]: {
+    thinking: { type: "disabled" },
+  },
+} as const;
 
 function appIdentityFetch(
   input: RequestInfo | URL,
@@ -368,6 +453,7 @@ function createAgent(options: ProviderOptions): Agent {
         abortSignal: timeout(),
         maxRetries: 0,
         maxOutputTokens: 4000,
+        providerOptions: OPENCODE_GO_PROVIDER_OPTIONS,
       });
       return normalizedJson(result.text, schema);
     } catch (error) {
@@ -400,6 +486,7 @@ function createAgent(options: ProviderOptions): Agent {
           abortSignal: timeout(),
           maxRetries: 0,
           maxOutputTokens: 4000,
+          providerOptions: OPENCODE_GO_PROVIDER_OPTIONS,
         });
         if (result.toolCalls.length !== 1 || result.toolCalls[0].toolName !== "private_plan_reply") {
           throw new AgentError("invalid_output", "model returned invalid structured output");
@@ -423,17 +510,32 @@ function createAgent(options: ProviderOptions): Agent {
     },
 
     async generateOffer(input) {
+      const compatibleOptions = input.options.filter((option) =>
+        optionMeetsHardOptionConditions(option, input.privateConditions.hard),
+      );
+      if (compatibleOptions.length === 0) {
+        throw new AgentError("no_feasible_options");
+      }
+      const localizedOptions = compatibleOptions.map((option) => ({
+        ...option,
+        startsAtLocal: formatZonedDateTime(
+          new Date(option.startsAt),
+          input.outing.cutoffTimeZone,
+        ),
+        timeZone: input.outing.cutoffTimeZone,
+      }));
       const prompt = [
         "Create one tentative plan offer for your owner. This is not a confirmation.",
         "Return one JSON object with exactly these fields: optionId, activity, startsAt, estimatedCostCents, activityTags, attendeeUserIds, counterOfferToId (UUID or null), privateNote.",
-        "Choose only a supplied catalog option and copy its activity, exact start time, cost, and tags. Include your owner in attendeeUserIds. Use only participants whose responseStatus is interested. Do not change strict conditions.",
+        "Choose only a supplied catalog option and copy its exact optionId, activity, canonical startsAt ISO instant, estimatedCostCents, and activityTags. Include your owner in attendeeUserIds. Use only participants whose responseStatus is interested. Do not change strict conditions.",
+        "Every supplied catalog option has already passed your owner's hard availability, budget, and activity-tag checks. Do not claim a supplied option violates those checks. Use its startsAtLocal and timeZone for plain-language time descriptions. Do not infer other participants' private conditions.",
         "Use only your owner's private conditions and rankings, the public catalog, participant names, resolved tie result, and approved shared offers below. A counterOfferToId must name a supplied shared offer owned by another participant, or be null. Do not disclose your privateNote to other people.",
         `Outing suggestion: ${JSON.stringify(input.outing.suggestion)}`,
         `Your user ID: ${JSON.stringify(input.participantUserId)}`,
         `Your private planning input: ${JSON.stringify(input.privateInput)}`,
         `Your private hard conditions and flexible preferences: ${JSON.stringify(input.privateConditions)}`,
         `Your private option rankings: ${JSON.stringify(input.privateRankings)}`,
-        `Catalog options: ${JSON.stringify(input.options)}`,
+        `Catalog options: ${JSON.stringify(localizedOptions)}`,
         `Admitted interested participants: ${JSON.stringify(input.participants)}`,
         `Approved shared offers: ${JSON.stringify(input.approvedOffers)}`,
         `Resolved tie context: ${JSON.stringify(input.tieContext ?? null)}`,
@@ -454,7 +556,7 @@ export function createOpenCodeGoAgent(config: OpenCodeGoAgentConfig): Agent {
     throw new AgentError("unavailable", "the active demo model is pinned to DeepSeek V4.1 Flash");
   }
   return createAgent({
-    name: "opencode-go",
+    name: OPENCODE_GO_PROVIDER_NAME,
     config,
     requiresSession: true,
     postResponseBillingGuard: true,

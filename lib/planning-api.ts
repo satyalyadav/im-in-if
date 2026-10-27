@@ -994,8 +994,10 @@ async function generateOffer(
       conditionRows,
     );
     if (!eligibility.ok) {
+      console.warn("[offer-candidate-ineligible]", eligibility.reason);
       return api(409, {
         error: eligibility.reason === "conditions_incomplete" ? "conditions_need_review" : "offer_not_feasible",
+        reason: eligibility.reason,
       });
     }
     const offerId = crypto.randomUUID();
@@ -1033,6 +1035,9 @@ async function generateOffer(
     });
   } catch (error) {
     const code = error instanceof AgentError ? error.code : "model_error";
+    if (code === "no_feasible_options") {
+      return api(409, { error: "offer_not_feasible" });
+    }
     console.error("offer generation failed", code);
     return api(code === "unavailable" ? 503 : 502, {
       error: code,

@@ -7,15 +7,28 @@ import {
   ACTIVE_GO_MODEL,
   createOpenCodeGoAgent,
   getSafeAgentFailureDiagnostic,
+  type OfferGenerationInput,
 } from "@/lib/agent";
+import { validateCandidate } from "@/lib/planning";
+import {
+  emptyConditionInterpretation,
+  type CatalogOption,
+  type OfferCandidate,
+} from "@/lib/planning-types";
 
 type Captured = {
   body: Record<string, unknown>;
+  method: string | undefined;
+  path: string | undefined;
   userAgent: string | undefined;
   session: string | undefined;
 };
 
-type Handler = (request: IncomingMessage, response: ServerResponse) => void;
+type Handler = (
+  request: IncomingMessage,
+  response: ServerResponse,
+  body: Record<string, unknown>,
+) => void;
 const servers: Server[] = [];
 
 async function fakeGo(handler: Handler): Promise<{ baseURL: string; captured: Captured[] }> {
@@ -24,8 +37,11 @@ async function fakeGo(handler: Handler): Promise<{ baseURL: string; captured: Ca
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
+      const parsedBody = JSON.parse(body) as Record<string, unknown>;
       captured.push({
-        body: JSON.parse(body) as Record<string, unknown>,
+        body: parsedBody,
+        method: request.method,
+        path: request.url,
         userAgent: Array.isArray(request.headers["user-agent"])
           ? request.headers["user-agent"][0]
           : request.headers["user-agent"],
@@ -33,7 +49,7 @@ async function fakeGo(handler: Handler): Promise<{ baseURL: string; captured: Ca
           ? request.headers["x-opencode-session"][0]
           : request.headers["x-opencode-session"],
       });
-      handler(request, response);
+      handler(request, response, parsedBody);
     });
   });
   servers.push(server);
@@ -123,6 +139,48 @@ function turnInput() {
   };
 }
 
+function offerInput(options: CatalogOption[]): OfferGenerationInput {
+  const privateConditions = emptyConditionInterpretation();
+  privateConditions.hard.availableWindows = [{
+    startsAt: "2026-10-28T02:01:00.000Z",
+    endsAt: "2026-10-28T06:00:00.000Z",
+  }];
+  privateConditions.hard.maxCostCents = 1500;
+  privateConditions.hard.requiredActivityTags = ["movie"];
+  privateConditions.hard.avoidedActivityTags = ["comedy"];
+  return {
+    outing,
+    sessionId: "ses_synthetic-maya-offer",
+    participantUserId: "maya-user",
+    privateInput: "Synthetic Maya private input",
+    privateConditions,
+    privateRankings: [],
+    options,
+    participants: [
+      { userId: "maya-user", displayName: "Maya" },
+      { userId: "sam-user", displayName: "Sam" },
+    ],
+    approvedOffers: [],
+  };
+}
+
+function catalogOption(
+  id: string,
+  startsAt: string,
+  estimatedCostCents: number,
+  activityTags = ["movie"],
+): CatalogOption {
+  return {
+    id,
+    title: `Synthetic option ${id}`,
+    activity: "Movie",
+    startsAt,
+    estimatedCostCents,
+    activityTags,
+    source: "sample",
+  };
+}
+
 const outing = {
   suggestion: "Synthetic dinner plan",
   cutoffAt: "2026-11-01T02:30:00.000Z",
@@ -156,8 +214,156 @@ describe("OpenCode Go agent boundary", () => {
       errorClass: "APICallError",
       statusCode: 503,
       retryable: true,
+      category: "upstream_error",
     });
     expect(JSON.stringify(diagnostic)).not.toContain(privateValue);
+  });
+
+  it.each([
+    ["missing_session", 400, { error: { code: "session_not_found", message: "Session not found" } }],
+    ["tool_choice_or_schema", 400, { error: { code: "unsupported_tool_choice", message: "tool_choice is unsupported" } }],
+    ["invalid_request_parameters", 400, { error: { type: "invalid_request_error", message: "Invalid parameter" } }],
+    ["context_length", 400, { error: { code: "context_length_exceeded", message: "Maximum context length exceeded" } }],
+    ["authentication", 401, { error: { code: "unauthorized", message: "Invalid API key" } }],
+    ["rate_or_usage_limit", 429, { error: { code: "insufficient_quota", message: "Usage limit exceeded" } }],
+    ["upstream_error", 502, { error: { message: "Gateway failure" } }],
+    ["unknown", 404, { error: { message: "Provider returned an unclassified failure" } }],
+  ] as const)("categorizes provider failures as %s without exposing provider text", (category, statusCode, body) => {
+    const privateValue = "PRIVATE-RESPONSE-BODY";
+    const responseBody = JSON.stringify({
+      ...body,
+      privateText: privateValue,
+      userId: "owner-user-id",
+      sessionId: "ses-private-session",
+    });
+    const diagnostic = getSafeAgentFailureDiagnostic(new APICallError({
+      message: `${privateValue} owner-user-id ses-private-session`,
+      url: `https://provider.invalid/${privateValue}`,
+      requestBodyValues: { prompt: "PRIVATE-PROMPT" },
+      responseHeaders: { authorization: "PRIVATE-SECRET" },
+      responseBody,
+      statusCode,
+      isRetryable: false,
+    }));
+
+    expect(diagnostic).toEqual({
+      errorClass: "APICallError",
+      statusCode,
+      retryable: false,
+      category,
+    });
+    const serialized = JSON.stringify(diagnostic);
+    expect(serialized).not.toContain(privateValue);
+    expect(serialized).not.toContain("PRIVATE-PROMPT");
+    expect(serialized).not.toContain("PRIVATE-SECRET");
+    expect(serialized).not.toContain("owner-user-id");
+    expect(serialized).not.toContain("ses-private-session");
+  });
+
+  it("disables DeepSeek thinking before sending the forced typed reply tool", async () => {
+    const expected = { text: "What time works?", conditionUpdate: null };
+    const { baseURL, captured } = await fakeGo((_request, response, body) => {
+      const thinking = body.thinking as { type?: string } | undefined;
+      if (body.tool_choice && thinking?.type !== "disabled") {
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "tool_choice requires disabled thinking" } }));
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(toolCallCompletion([call("call-1", expected)], goUsage()));
+    });
+
+    const result = await agent(baseURL).reply(turnInput());
+
+    expect(result).toEqual(expected);
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toMatchObject({
+      method: "POST",
+      path: "/v1/chat/completions",
+      session: "ses_synthetic-conversation-1",
+      body: {
+        model: ACTIVE_GO_MODEL,
+        thinking: { type: "disabled" },
+        tool_choice: {
+          type: "function",
+          function: { name: "private_plan_reply" },
+        },
+      },
+    });
+  });
+
+  it("offers only catalog options that fit the owner's hard option conditions", async () => {
+    const options = [
+      catalogOption("00000000-0000-4000-8000-000000000007", "2026-10-28T02:00:00.000Z", 900),
+      catalogOption("00000000-0000-4000-8000-000000000008", "2026-10-28T03:00:00.000Z", 1200),
+      catalogOption("00000000-0000-4000-8000-000000000009", "2026-10-28T04:00:00.000Z", 1600),
+      catalogOption("00000000-0000-4000-8000-000000000010", "2026-10-28T05:00:00.000Z", 1200, ["movie", "comedy"]),
+      catalogOption("00000000-0000-4000-8000-000000000011", "2026-10-28T05:00:00.000Z", 1200, ["live"]),
+    ];
+    const { baseURL, captured } = await fakeGo((_request, response, body) => {
+      const messages = body.messages as Array<{ role?: string; content?: unknown }>;
+      const prompt = String(messages.find((message) => message.role === "user")?.content ?? "");
+      const catalogLine = prompt.split("\n").find((line) => line.startsWith("Catalog options: "));
+      const supplied = JSON.parse(catalogLine?.slice("Catalog options: ".length) ?? "[]") as CatalogOption[];
+      const selected = supplied[0];
+      if (!selected) throw new Error("mock provider received no catalog options");
+      const candidate: OfferCandidate = {
+        optionId: selected.id,
+        activity: selected.activity,
+        startsAt: selected.startsAt,
+        estimatedCostCents: selected.estimatedCostCents,
+        activityTags: selected.activityTags,
+        attendeeUserIds: ["maya-user"],
+        counterOfferToId: null,
+        privateNote: "Synthetic private offer note.",
+      };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(completion(JSON.stringify(candidate), goUsage()));
+    });
+    const provider = agent(baseURL);
+    const input = offerInput(options);
+    if (!provider.generateOffer) throw new Error("offer generation is unavailable");
+
+    const candidate = await provider.generateOffer(input);
+
+    expect(captured).toHaveLength(1);
+    const messages = captured[0].body.messages as Array<{ role?: string; content?: unknown }>;
+    const prompt = String(messages.find((message) => message.role === "user")?.content ?? "");
+    expect(prompt).not.toContain(options[0].id);
+    expect(prompt).toContain(options[1].id);
+    expect(prompt).not.toContain(options[2].id);
+    expect(prompt).not.toContain(options[3].id);
+    expect(prompt).not.toContain(options[4].id);
+    expect(prompt).toContain('"startsAt":"2026-10-28T03:00:00.000Z"');
+    expect(prompt).toContain('"startsAtLocal":"Oct 27, 2026, 8:00 PM MST"');
+    expect(prompt).toContain('"timeZone":"America/Phoenix"');
+    expect(prompt).toContain("has already passed your owner's hard availability, budget, and activity-tag checks");
+    expect(candidate.optionId).toBe(options[1].id);
+    expect(validateCandidate(
+      candidate,
+      "maya-user",
+      options[1],
+      [{ userId: "maya-user", admissionStatus: "admitted", responseStatus: "interested" }],
+      [{ userId: "maya-user", interpretation: input.privateConditions, interpretationReady: true }],
+    )).toEqual({ ok: true });
+  });
+
+  it("does not call the provider when no catalog options fit the owner's hard conditions", async () => {
+    const options = [
+      catalogOption("00000000-0000-4000-8000-000000000007", "2026-10-28T02:00:00.000Z", 900),
+      catalogOption("00000000-0000-4000-8000-000000000009", "2026-10-28T04:00:00.000Z", 1600),
+      catalogOption("00000000-0000-4000-8000-000000000010", "2026-10-28T05:00:00.000Z", 1200, ["movie", "comedy"]),
+    ];
+    const { baseURL, captured } = await fakeGo((_request, response) => {
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "the provider must not be called" } }));
+    });
+    const provider = agent(baseURL);
+    if (!provider.generateOffer) throw new Error("offer generation is unavailable");
+
+    await expect(provider.generateOffer(offerInput(options)))
+      .rejects.toMatchObject({ code: "no_feasible_options" } satisfies Partial<AgentError>);
+    expect(captured).toHaveLength(0);
   });
 
   it("pins DeepSeek, uses an honest app identity and stable session, and accepts explicit zero-cost metadata", async () => {

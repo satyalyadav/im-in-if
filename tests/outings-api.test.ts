@@ -1,5 +1,6 @@
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveCutoffInstant } from "@/lib/cutoff";
 import {
   AgentError,
   type Agent,
@@ -148,6 +149,65 @@ describe("starting an outing", () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error).toBe("nonexistent_local_time");
+  });
+
+  it.each([
+    {
+      zoneName: "Phoenix",
+      cutoffDate: "2026-10-27",
+      cutoffTime: "16:00",
+      sampleDate: "2026-10-28",
+      timeZone: "America/Phoenix",
+    },
+    {
+      zoneName: "New York after the spring DST transition",
+      cutoffDate: "2026-03-07",
+      cutoffTime: "16:00",
+      sampleDate: "2026-03-08",
+      timeZone: "America/New_York",
+    },
+    {
+      zoneName: "Berlin after the spring DST transition",
+      cutoffDate: "2026-03-28",
+      cutoffTime: "16:00",
+      sampleDate: "2026-03-29",
+      timeZone: "Europe/Berlin",
+    },
+  ])("seeds sample options at their labeled local times in $zoneName", async ({
+    cutoffDate,
+    cutoffTime,
+    sampleDate,
+    timeZone,
+  }) => {
+    const response = await createOuting(ctx(new FakeAgent()), {
+      suggestion: "Dinner together?",
+      cutoffDate,
+      cutoffTime,
+      cutoffTimeZone: timeZone,
+    });
+    expect(response.status).toBe(201);
+    const outingId = (response.body.outing as { id: string }).id;
+    const samples = await db.query<{
+      title: string;
+      starts_at: string | Date;
+      source: string;
+    }>(
+      `select title, starts_at, source from outing_options
+        where outing_id = $1 order by starts_at`,
+      [outingId],
+    );
+    const expectedTimes = ["19:00", "20:00"].map((time) => {
+      const resolved = resolveCutoffInstant({ date: sampleDate, time, timeZone });
+      expect(resolved.ok).toBe(true);
+      return resolved.ok ? resolved.instant.toISOString() : null;
+    });
+
+    expect(samples.map((sample) => sample.title)).toEqual([
+      "Sample: film night at 7 PM",
+      "Sample: film night at 8 PM",
+    ]);
+    expect(samples.map((sample) => new Date(sample.starts_at).toISOString())).toEqual(expectedTimes);
+    expect(samples.map((sample) => sample.source)).toEqual(["sample", "sample"]);
   });
 });
 

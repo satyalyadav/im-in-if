@@ -102,6 +102,27 @@ function isUuid(value: string): boolean {
   return UUID_PATTERN.test(value);
 }
 
+function nextCalendarDateInTimeZone(instant: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(instant);
+  const values = new Map(parts.map((part) => [part.type, part.value]));
+  const nextDate = new Date(0);
+  nextDate.setUTCFullYear(
+    Number(values.get("year")),
+    Number(values.get("month")) - 1,
+    Number(values.get("day")) + 1,
+  );
+  return [
+    String(nextDate.getUTCFullYear()).padStart(4, "0"),
+    String(nextDate.getUTCMonth() + 1).padStart(2, "0"),
+    String(nextDate.getUTCDate()).padStart(2, "0"),
+  ].join("-");
+}
+
 function iso(value: string | Date): string {
   return new Date(value).toISOString();
 }
@@ -420,7 +441,7 @@ async function generateReply(
     );
     if (code === "model_error") {
       console.error(
-        "[DEBUG-provider-status-20261025]",
+        "[agent-provider-failure]",
         JSON.stringify({
           stage: "agent_turn",
           ...getSafeAgentFailureDiagnostic(error),
@@ -462,8 +483,29 @@ export async function createOuting(
   const sessionId = `ses_${crypto.randomUUID()}`;
   const firstSampleId = crypto.randomUUID();
   const secondSampleId = crypto.randomUUID();
-  const sampleStartsAt = new Date(cutoff.instant.getTime() + 24 * 60 * 60 * 1000);
-  const laterSampleStartsAt = new Date(sampleStartsAt.getTime() + 60 * 60 * 1000);
+  const sampleDate = nextCalendarDateInTimeZone(cutoff.instant, parsed.data.cutoffTimeZone);
+  const sampleStartsAt = resolveCutoffInstant({
+    date: sampleDate,
+    time: "19:00",
+    timeZone: parsed.data.cutoffTimeZone,
+  });
+  const laterSampleStartsAt = resolveCutoffInstant({
+    date: sampleDate,
+    time: "20:00",
+    timeZone: parsed.data.cutoffTimeZone,
+  });
+  if (!sampleStartsAt.ok) {
+    return {
+      status: 400,
+      body: { error: sampleStartsAt.error },
+    };
+  }
+  if (!laterSampleStartsAt.ok) {
+    return {
+      status: 400,
+      body: { error: laterSampleStartsAt.error },
+    };
+  }
   const result = await context.db.transaction<OutingRow>([
     {
       text: `insert into outings
@@ -500,9 +542,9 @@ export async function createOuting(
         firstSampleId,
         outingId,
         context.userId,
-        sampleStartsAt.toISOString(),
+        sampleStartsAt.instant.toISOString(),
         secondSampleId,
-        laterSampleStartsAt.toISOString(),
+        laterSampleStartsAt.instant.toISOString(),
       ],
     },
   ]);

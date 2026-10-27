@@ -35,6 +35,30 @@ export type CandidateValidation =
         | "option_mismatch";
     };
 
+export type HardOptionConditions = Pick<
+  ConditionInterpretation["hard"],
+  "availableWindows" | "maxCostCents" | "requiredActivityTags" | "avoidedActivityTags"
+>;
+
+export function optionMeetsHardOptionConditions(
+  option: CatalogChoice,
+  hard: HardOptionConditions,
+): boolean {
+  const activityTags = new Set(option.activityTags.map(normalizeTag));
+  const startsAt = new Date(option.startsAt).getTime();
+  return (
+    (hard.maxCostCents === null || option.estimatedCostCents <= hard.maxCostCents) &&
+    hard.requiredActivityTags.every((tag) => activityTags.has(normalizeTag(tag))) &&
+    hard.avoidedActivityTags.every((tag) => !activityTags.has(normalizeTag(tag))) &&
+    (hard.availableWindows.length === 0 ||
+      hard.availableWindows.some((window) => {
+        const from = new Date(window.startsAt).getTime();
+        const to = new Date(window.endsAt).getTime();
+        return startsAt >= from && startsAt <= to;
+      }))
+  );
+}
+
 export function validateCandidate(
   offer: OfferCandidate,
   ownerUserId: string,
@@ -76,8 +100,6 @@ export function validateCandidate(
   }
 
   const conditionByUser = new Map(conditions.map((row) => [row.userId, row]));
-  const activityTags = new Set(option.activityTags.map(normalizeTag));
-  const startsAt = new Date(option.startsAt).getTime();
 
   for (const userId of attendeeIds) {
     const row = conditionByUser.get(userId);
@@ -91,17 +113,9 @@ export function validateCandidate(
 
     const hard = interpretation.hard;
     if (
-      (hard.maxCostCents !== null && option.estimatedCostCents > hard.maxCostCents) ||
-      hard.requiredActivityTags.some((tag) => !activityTags.has(normalizeTag(tag))) ||
-      hard.avoidedActivityTags.some((tag) => activityTags.has(normalizeTag(tag))) ||
+      !optionMeetsHardOptionConditions(option, hard) ||
       hard.attendanceDependencies.some((requiredUserId) => !attendeeSet.has(requiredUserId)) ||
-      attendeeIds.length < hard.minimumGroupSize ||
-      (hard.availableWindows.length > 0 &&
-        !hard.availableWindows.some((window) => {
-          const from = new Date(window.startsAt).getTime();
-          const to = new Date(window.endsAt).getTime();
-          return startsAt >= from && startsAt <= to;
-        }))
+      attendeeIds.length < hard.minimumGroupSize
     ) {
       return { ok: false, reason: "condition_conflict" };
     }
