@@ -8,7 +8,7 @@ Cubbie Hackathon Track 2 project.
 
 The intended flow gives each person a private chat with their own agent. Their agents work with friends' agents to find a workable plan. Everyone must explicitly approve the proposed activity, time, estimated cost, and attendee list before it is final. Agents can draft tentative options from the outing idea and private chats. Costs are estimates; the app does not check live listings or make bookings.
 
-Read the [build plan](docs/build-plan.md) for setup and model-provider details. Check its model setup and free-use limits before enabling agent calls. The [verification record](docs/verification/0001-private-agent-slice.md) describes checked behavior and data retention.
+Read the [build plan](docs/build-plan.md) for setup and model-provider details. Check its included-usage limits and required Extra Usage setting before enabling agent calls. The [verification record](docs/verification/0001-private-agent-slice.md) describes checked behavior and data retention.
 
 ## Run locally
 
