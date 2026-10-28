@@ -5,10 +5,25 @@ import { OutingList } from "@/components/outing-list";
 import { SignInPanel } from "@/components/sign-in-panel";
 import { StartOutingForm } from "@/components/start-outing-form";
 import { TopBar } from "@/components/top-bar";
+import { AgentChatPrototype } from "@/components/agent-chat-prototype";
 
 export const dynamic = "force-dynamic";
 
-export default async function HomePage() {
+type HomePageProps = {
+  searchParams: Promise<{
+    prototype?: string | string[];
+    variant?: string | string[];
+  }>;
+};
+
+export default async function HomePage({ searchParams }: HomePageProps) {
+  const query = await searchParams;
+  if (process.env.NODE_ENV !== "production" && query.prototype === "agent-chat") {
+    const requestedVariant = Array.isArray(query.variant) ? query.variant[0] : query.variant;
+    const initialVariant = requestedVariant === "B" || requestedVariant === "C" ? requestedVariant : "A";
+    return <AgentChatPrototype initialVariant={initialVariant} />;
+  }
+
   const userId = await getCurrentUserId();
   let outings: OutingView[] = [];
 

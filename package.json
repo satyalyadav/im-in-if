@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
+    "prototype": "next dev",
     "build": "next build",
     "start": "next start",
     "sweep": "node scripts/sweep-outings.mjs",
