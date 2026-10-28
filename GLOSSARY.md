@@ -44,7 +44,7 @@ A condition linking one participant's attendance to a named person's attendance.
 A condition that sets the number of people needed for a participant to join.
 
 **Response cutoff**:
-A starter-set time after which a person who has not replied is not part of the current proposed group. Their reason is unknown; final confirmation may happen afterward.
+The starter-set deadline for collecting interest. It determines when unanswered participants are excluded from the current proposed group; it does not delay confirmation. Silence does not explain why someone did not reply.
 
 **Tentative agreement**:
 A plan the agents have negotiated that remains subject to approval by the people involved.

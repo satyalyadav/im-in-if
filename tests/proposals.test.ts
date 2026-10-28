@@ -1,6 +1,7 @@
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPgliteDb, migrate, type Db, type DbStatement } from "@/lib/db";
+import { processOutingDeadlines } from "@/lib/maintenance";
 import { createOuting } from "@/lib/outings-api";
 import { emptyConditionInterpretation } from "@/lib/planning-types";
 import { getOutingWorkspace, handlePlanningAction, requestAdmission } from "@/lib/planning-api";
@@ -8,6 +9,7 @@ import { getOutingWorkspace, handlePlanningAction, requestAdmission } from "@/li
 const A = "proposal-starter";
 const B = "proposal-attendee";
 const C = "proposal-joiner";
+const D = "proposal-nonresponder";
 let pg: PGlite;
 let db: Db;
 
@@ -29,7 +31,14 @@ function ctx(userId: string, verifiedEmails: string[] = []) {
   return { db, userId, verifiedEmails };
 }
 
-async function setupPlan(includeC = false) {
+async function setupPlan(
+  includeC = false,
+  options: {
+    processCutoff?: boolean;
+    publishOffer?: boolean;
+    attendeeUserIds?: string[];
+  } = {},
+) {
   const created = await createOuting(ctx(A), {
     suggestion: "Synthetic approval test",
     cutoffDate: "2026-10-31",
@@ -83,7 +92,9 @@ async function setupPlan(includeC = false) {
       [outing.id, userId],
     );
   }
-  await db.query(`update outings set cutoff_processed_at = now() where id = $1`, [outing.id]);
+  if (options.processCutoff !== false) {
+    await db.query(`update outings set cutoff_processed_at = now() where id = $1`, [outing.id]);
+  }
   const optionRows = await db.query<{
     id: string;
     activity: string;
@@ -102,10 +113,35 @@ async function setupPlan(includeC = false) {
        attendee_user_ids, activity_tags, private_note, status)
      values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, '', 'draft')`,
     [offerId, outing.id, A, option.id, option.activity, option.starts_at,
-      option.estimated_cost_cents, JSON.stringify([A, B]), JSON.stringify(option.activity_tags)],
+      option.estimated_cost_cents, JSON.stringify(options.attendeeUserIds ?? [A, B]), JSON.stringify(option.activity_tags)],
   );
-  expect((await handlePlanningAction(ctx(A), outing.id, { action: "publish_offer", offerId })).status).toBe(200);
-  return { outingId: outing.id, offerId, option, members: [A, B] };
+  if (options.publishOffer !== false) {
+    expect((await handlePlanningAction(ctx(A), outing.id, { action: "publish_offer", offerId })).status).toBe(200);
+  }
+  return { outingId: outing.id, inviteToken: outing.inviteToken, offerId, option, members: [A, B] };
+}
+
+async function postPlanningRoute(userId: string, outingId: string, action: Record<string, unknown>) {
+  vi.doMock("@/lib/db", async () => {
+    const actual = await vi.importActual<typeof import("@/lib/db")>("@/lib/db");
+    return { ...actual, getDb: async () => db };
+  });
+  vi.resetModules();
+  try {
+    const { POST } = await import("@/app/api/outings/[id]/planning/route");
+    const response = await POST(new Request(`http://localhost/api/outings/${outingId}/planning`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: `im_in_if_local_user=${userId}`,
+      },
+      body: JSON.stringify(action),
+    }), { params: Promise.resolve({ id: outingId }) });
+    return { status: response.status, body: await response.json() as Record<string, unknown> };
+  } finally {
+    vi.doUnmock("@/lib/db");
+    vi.resetModules();
+  }
 }
 
 async function publishProposal(outingId: string, offerId: string) {
@@ -117,6 +153,175 @@ async function publishProposal(outingId: string, offerId: string) {
 }
 
 describe("versioned proposal approvals", () => {
+  it("publishes before cutoff, keeps approvals explicit, and confirms the exact plan through the API route", async () => {
+    const plan = await setupPlan(true, {
+      processCutoff: false,
+      publishOffer: false,
+      attendeeUserIds: [A, B, C],
+    });
+    const nonresponderRequest = await requestAdmission(ctx(D), plan.inviteToken, {
+      displayName: "Nonresponder",
+      emailOptIn: false,
+      email: null,
+    });
+    expect(nonresponderRequest.status).toBe(200);
+    expect((await handlePlanningAction(ctx(A), plan.outingId, {
+      action: "decide_admission", userId: D, decision: "admit",
+    })).status).toBe(200);
+    const hidden = await getOutingWorkspace(ctx(B), plan.outingId);
+    expect(hidden.status).toBe(200);
+    expect(hidden.body.offers).toEqual([]);
+    expect((await getOutingWorkspace(ctx(A), plan.outingId)).body.myDraftOffers).toHaveLength(1);
+
+    const publishedOffer = await postPlanningRoute(A, plan.outingId, {
+      action: "publish_offer",
+      offerId: plan.offerId,
+    });
+    expect(publishedOffer.status).toBe(200);
+    expect((await getOutingWorkspace(ctx(B), plan.outingId)).body.offers).toHaveLength(1);
+
+    const requested = await postPlanningRoute(A, plan.outingId, {
+      action: "publish_proposal",
+      offerId: plan.offerId,
+    });
+    expect(requested.status).toBe(201);
+    const proposal = requested.body.proposal as {
+      id: string;
+      revision: number;
+      publishedAt: string;
+      expiresAt: string;
+      attendeeUserIds: string[];
+      approvalCount: number;
+    };
+    expect(proposal).toMatchObject({
+      status: "published",
+      attendeeUserIds: [A, B, C],
+      approvalCount: 0,
+    });
+    const firstDeadline = proposal.expiresAt;
+
+    for (const userId of [A, B, C, D]) {
+      const view = await getOutingWorkspace(ctx(userId), plan.outingId);
+      expect(view.body.proposal).toMatchObject({
+        id: proposal.id,
+        revision: proposal.revision,
+        activity: "Movie",
+        estimatedCostCents: 900,
+        attendeeUserIds: [A, B, C],
+        approvalCount: 0,
+      });
+    }
+    const nonresponderProposal = (await getOutingWorkspace(ctx(D), plan.outingId)).body.proposal as {
+      attendeeUserIds: string[];
+    };
+    expect(nonresponderProposal.attendeeUserIds).not.toContain(D);
+
+    const repeatedInterest = await postPlanningRoute(A, plan.outingId, {
+      action: "set_interest",
+      interested: true,
+    });
+    expect(repeatedInterest.body.proposal).toMatchObject({
+      id: proposal.id,
+      expiresAt: firstDeadline,
+      approvalCount: 0,
+    });
+
+    const ownerApproval = await postPlanningRoute(A, plan.outingId, {
+      action: "approve_proposal",
+      proposalId: proposal.id,
+      revision: proposal.revision,
+    });
+    expect(ownerApproval.body).toMatchObject({
+      proposal: { id: proposal.id, approvalCount: 1, expiresAt: firstDeadline },
+      myProposalApproved: true,
+    });
+
+    const retried = await postPlanningRoute(A, plan.outingId, {
+      action: "publish_proposal",
+      offerId: plan.offerId,
+    });
+    expect(retried.status).toBe(200);
+    expect(retried.body.proposal).toMatchObject({
+      id: proposal.id,
+      revision: proposal.revision,
+      publishedAt: proposal.publishedAt,
+      expiresAt: firstDeadline,
+      approvalCount: 1,
+    });
+
+    const secondOption = await db.query<{
+      id: string;
+      starts_at: string | Date;
+      activity: string;
+      estimated_cost_cents: number;
+      activity_tags: unknown;
+    }>(
+      `select id, starts_at, activity, estimated_cost_cents, activity_tags
+         from outing_options where outing_id = $1 order by starts_at desc limit 1`,
+      [plan.outingId],
+    );
+    const otherOfferId = crypto.randomUUID();
+    await db.query(
+      `insert into offers
+        (id, outing_id, owner_user_id, option_id, activity, starts_at, estimated_cost_cents,
+         attendee_user_ids, activity_tags, private_note, status)
+       values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, '', 'draft')`,
+      [otherOfferId, plan.outingId, B, secondOption[0].id, secondOption[0].activity,
+        secondOption[0].starts_at, secondOption[0].estimated_cost_cents,
+        JSON.stringify([A, B, C]), JSON.stringify(secondOption[0].activity_tags)],
+    );
+    expect((await postPlanningRoute(B, plan.outingId, {
+      action: "publish_offer",
+      offerId: otherOfferId,
+    })).status).toBe(200);
+    const otherProposal = await postPlanningRoute(B, plan.outingId, {
+      action: "publish_proposal",
+      offerId: otherOfferId,
+    });
+    expect(otherProposal).toMatchObject({ status: 409, body: { error: "proposal_already_active" } });
+    expect((await getOutingWorkspace(ctx(B), plan.outingId)).body.proposal).toMatchObject({
+      id: proposal.id,
+      approvalCount: 1,
+      expiresAt: firstDeadline,
+    });
+
+    const attendeeApproval = await postPlanningRoute(B, plan.outingId, {
+      action: "approve_proposal",
+      proposalId: proposal.id,
+      revision: proposal.revision,
+    });
+    expect(attendeeApproval.body.proposal).toMatchObject({
+      id: proposal.id,
+      approvalCount: 2,
+      expiresAt: firstDeadline,
+    });
+
+    const finalApproval = await postPlanningRoute(C, plan.outingId, {
+      action: "approve_proposal",
+      proposalId: proposal.id,
+      revision: proposal.revision,
+    });
+    expect(finalApproval.body.confirmedProposal).toMatchObject({
+      id: proposal.id,
+      status: "confirmed",
+      attendeeUserIds: [A, B, C],
+    });
+    const approvals = await db.query<{ user_id: string }>(
+      `select user_id from proposal_approvals where proposal_id = $1 order by user_id`,
+      [proposal.id],
+    );
+    expect(approvals.map((row) => row.user_id)).toEqual([A, B, C].sort());
+
+    const interestChange = await postPlanningRoute(A, plan.outingId, {
+      action: "set_interest",
+      interested: false,
+    });
+    expect(interestChange.body).toMatchObject({
+      outing: { status: "confirmed" },
+      confirmedProposal: { id: proposal.id, status: "confirmed", attendeeUserIds: [A, B, C] },
+    });
+  });
+
   it("confirms once under simultaneous approvals and notifies only the proposed attendees", async () => {
     const plan = await setupPlan();
     const proposal = await publishProposal(plan.outingId, plan.offerId);
@@ -152,6 +357,60 @@ describe("versioned proposal approvals", () => {
         where outing_id = $1 and event_type = 'final_approval'`, [plan.outingId],
     );
     expect(mail).toEqual([{ status: "suppressed", recipient_email: "attendee@example.test" }]);
+  });
+
+  it("requires an explicit action to replace a different active plan and asks every attendee again", async () => {
+    const plan = await setupPlan();
+    const original = await publishProposal(plan.outingId, plan.offerId);
+    await postPlanningRoute(A, plan.outingId, {
+      action: "approve_proposal",
+      proposalId: original.id,
+      revision: original.revision,
+    });
+    const secondOption = await db.query<{
+      id: string;
+      starts_at: string | Date;
+      activity: string;
+      estimated_cost_cents: number;
+      activity_tags: unknown;
+    }>(
+      `select id, starts_at, activity, estimated_cost_cents, activity_tags
+         from outing_options where outing_id = $1 order by starts_at desc limit 1`,
+      [plan.outingId],
+    );
+    const otherOfferId = crypto.randomUUID();
+    await db.query(
+      `insert into offers
+        (id, outing_id, owner_user_id, option_id, activity, starts_at, estimated_cost_cents,
+         attendee_user_ids, activity_tags, private_note, status)
+       values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, '', 'draft')`,
+      [otherOfferId, plan.outingId, B, secondOption[0].id, secondOption[0].activity,
+        secondOption[0].starts_at, secondOption[0].estimated_cost_cents,
+        JSON.stringify([A, B]), JSON.stringify(secondOption[0].activity_tags)],
+    );
+    expect((await postPlanningRoute(B, plan.outingId, {
+      action: "publish_offer",
+      offerId: otherOfferId,
+    })).status).toBe(200);
+
+    const replaced = await postPlanningRoute(B, plan.outingId, {
+      action: "replace_proposal",
+      proposalId: original.id,
+      offerId: otherOfferId,
+    });
+    expect(replaced.status).toBe(201);
+    expect(replaced.body.proposal).toMatchObject({
+      revision: original.revision + 1,
+      status: "published",
+      approvalCount: 0,
+      attendeeUserIds: [A, B],
+    });
+    expect((replaced.body.proposal as { id: string }).id).not.toBe(original.id);
+    const previous = await db.query<{ status: string }>(
+      `select status from proposals where id = $1`,
+      [original.id],
+    );
+    expect(previous).toEqual([{ status: "superseded" }]);
   });
 
   it("expires on the exact deadline, preserves the roster on explicit restart, and rejects stale revisions", async () => {
@@ -316,7 +575,7 @@ describe("versioned proposal approvals", () => {
     },
   );
 
-  it("expires a superseded join request and confirms a feasible departure revision", async () => {
+  it("keeps an active join proposal until it expires before confirming a departure revision", async () => {
     const plan = await setupPlan(true);
     const initial = await publishProposal(plan.outingId, plan.offerId);
     await Promise.all([A, B].map((userId) => handlePlanningAction(ctx(userId), plan.outingId, {
@@ -348,6 +607,21 @@ describe("versioned proposal approvals", () => {
     );
     expect(joinRequest[0].status).toBe("proposed");
 
+    const blockedDeparture = await handlePlanningAction(ctx(B), plan.outingId, { action: "request_departure" });
+    expect(blockedDeparture).toMatchObject({ status: 409, body: { error: "proposal_already_active" } });
+    expect((await db.query<{ status: string }>(
+      `select status from proposals where id = $1`, [joinProposal.id],
+    ))[0].status).toBe("published");
+    expect((await db.query<{ status: string }>(
+      `select status from join_requests where id = $1`, [joinRequest[0].id],
+    ))[0].status).toBe("proposed");
+
+    await db.query(
+      `update proposals set expires_at = now() - interval '1 millisecond' where id = $1`,
+      [joinProposal.id],
+    );
+    await processOutingDeadlines(db, plan.outingId, new Date(Date.now() + 1_000));
+
     const departure = await handlePlanningAction(ctx(B), plan.outingId, { action: "request_departure" });
     expect(departure.status).toBe(201);
     const departureProposal = departure.body.proposal as { id: string; revision: number };
@@ -358,7 +632,7 @@ describe("versioned proposal approvals", () => {
     const expiredJoin = await db.query<{ status: string }>(
       `select status from join_requests where id = $1`, [joinRequest[0].id],
     );
-    expect(superseded[0].status).toBe("superseded");
+    expect(superseded[0].status).toBe("expired");
     expect(expiredJoin[0].status).toBe("expired");
 
     const approved = await handlePlanningAction(ctx(A), plan.outingId, {

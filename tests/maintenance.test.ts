@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPgliteDb, migrate, type Db } from "@/lib/db";
 import { getOuting, createOuting } from "@/lib/outings-api";
 import { getMaintenanceHealth, processOutingDeadlines, sweepDueWork } from "@/lib/maintenance";
+import { handlePlanningAction, requestAdmission } from "@/lib/planning-api";
+import { emptyConditionInterpretation } from "@/lib/planning-types";
 
 let pg: PGlite;
 let db: Db;
@@ -28,7 +30,134 @@ async function newOuting(userId: string) {
   return (result.body.outing as { id: string }).id;
 }
 
+async function confirmBeforeCutoff(starterUserId: string, nonresponderUserId: string) {
+  const created = await createOuting({ db, userId: starterUserId }, {
+    suggestion: "Synthetic early confirmation",
+    cutoffDate: "2026-10-31",
+    cutoffTime: "19:30",
+    cutoffTimeZone: "America/Phoenix",
+  });
+  expect(created.status).toBe(201);
+  const outing = created.body.outing as { id: string; inviteToken: string };
+  const optionResult = await handlePlanningAction({ db, userId: starterUserId }, outing.id, {
+    action: "add_option",
+    title: "Synthetic early option",
+    activity: "Movie",
+    startsAt: "2026-11-02T02:00:00.000Z",
+    estimatedCostCents: 900,
+    activityTags: ["movie"],
+  });
+  expect(optionResult.status).toBe(201);
+  const options = await db.query<{
+    id: string;
+    activity: string;
+    starts_at: string | Date;
+    estimated_cost_cents: number;
+    activity_tags: unknown;
+  }>(
+    `select id, activity, starts_at, estimated_cost_cents, activity_tags
+       from outing_options where outing_id = $1`,
+    [outing.id],
+  );
+  await db.query(
+    `update participant_preferences set interpretation = $3::jsonb, interpretation_ready = true
+      where outing_id = $1 and user_id = $2`,
+    [outing.id, starterUserId, JSON.stringify(emptyConditionInterpretation())],
+  );
+  const interest = await handlePlanningAction({ db, userId: starterUserId }, outing.id, {
+    action: "set_interest",
+    interested: true,
+  });
+  expect(interest.status).toBe(200);
+
+  const offerId = crypto.randomUUID();
+  await db.query(
+    `insert into offers
+      (id, outing_id, owner_user_id, option_id, activity, starts_at, estimated_cost_cents,
+       attendee_user_ids, activity_tags, private_note, status)
+     values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, '', 'draft')`,
+    [offerId, outing.id, starterUserId, options[0].id, options[0].activity, options[0].starts_at,
+      options[0].estimated_cost_cents, JSON.stringify([starterUserId]), JSON.stringify(options[0].activity_tags)],
+  );
+  expect((await handlePlanningAction({ db, userId: starterUserId }, outing.id, {
+    action: "publish_offer", offerId,
+  })).status).toBe(200);
+  const requested = await handlePlanningAction({ db, userId: starterUserId }, outing.id, {
+    action: "publish_proposal", offerId,
+  });
+  expect(requested.status).toBe(201);
+  const proposal = requested.body.proposal as { id: string; revision: number };
+  const approval = await handlePlanningAction({ db, userId: starterUserId }, outing.id, {
+    action: "approve_proposal",
+    proposalId: proposal.id,
+    revision: proposal.revision,
+  });
+  expect(approval).toMatchObject({ status: 200, body: { status: "confirmed" } });
+
+  const interestChange = await handlePlanningAction({ db, userId: starterUserId }, outing.id, {
+    action: "set_interest",
+    interested: false,
+  });
+  expect(interestChange.body).toMatchObject({ outing: { status: "confirmed" }, confirmedProposal: { id: proposal.id } });
+
+  const admission = await requestAdmission({ db, userId: nonresponderUserId }, outing.inviteToken, {
+    displayName: "Nonresponder",
+    emailOptIn: false,
+    email: null,
+  });
+  expect(admission.status).toBe(200);
+  expect((await handlePlanningAction({ db, userId: starterUserId }, outing.id, {
+    action: "decide_admission", userId: nonresponderUserId, decision: "admit",
+  })).status).toBe(200);
+  await db.query(
+    `update outings set cutoff_at = '2026-10-23T00:00:00Z', cutoff_processed_at = null where id = $1`,
+    [outing.id],
+  );
+  return { outingId: outing.id, proposalId: proposal.id, starterUserId, nonresponderUserId };
+}
+
 describe("durable global deadline and deletion sweep", () => {
+  it.each(["global sweep", "request-time processing"] as const)(
+    "keeps an early confirmed plan after %s and records nonresponses without adding attendees",
+    async (processing) => {
+      const plan = await confirmBeforeCutoff(`starter-${processing.replaceAll(" ", "-")}`, `silent-${processing.replaceAll(" ", "-")}`);
+      const now = new Date("2026-10-24T00:00:00.000Z");
+      if (processing === "global sweep") {
+        await expect(sweepDueWork(db, now)).resolves.toMatchObject({ cutoffsProcessed: 1 });
+      } else {
+        await processOutingDeadlines(db, plan.outingId, now);
+      }
+
+      const outing = await db.query<{ status: string; ended_at: string | Date | null; cutoff_processed_at: string | Date | null }>(
+        `select status, ended_at, cutoff_processed_at from outings where id = $1`,
+        [plan.outingId],
+      );
+      expect(outing[0].status).toBe("confirmed");
+      expect(outing[0].ended_at).toBeNull();
+      expect(outing[0].cutoff_processed_at).not.toBeNull();
+
+      const proposal = await db.query<{ status: string; attendee_user_ids: unknown }>(
+        `select status, attendee_user_ids from proposals where id = $1`,
+        [plan.proposalId],
+      );
+      expect(proposal).toEqual([{ status: "confirmed", attendee_user_ids: [plan.starterUserId] }]);
+
+      const participants = await db.query<{ user_id: string; response_status: string }>(
+        `select user_id, response_status from participants where outing_id = $1 order by user_id`,
+        [plan.outingId],
+      );
+      expect(participants).toEqual([
+        { user_id: plan.nonresponderUserId, response_status: "no_response" },
+        { user_id: plan.starterUserId, response_status: "not_interested" },
+      ]);
+      const approvals = await db.query<{ user_id: string }>(
+        `select user_id from proposal_approvals where proposal_id = $1`,
+        [plan.proposalId],
+      );
+      expect(approvals).toEqual([{ user_id: plan.starterUserId }]);
+    },
+  );
+
   it("claims a sweep once, records aggregate health, processes cutoffs, and deletes exactly at seven days", async () => {
     const pending = await newOuting("pending-starter");
     const older = await newOuting("ended-starter");

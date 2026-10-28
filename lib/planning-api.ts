@@ -114,6 +114,7 @@ type ProposalRow = {
   expires_at: string | Date;
   confirmed_at: string | Date | null;
   approval_count: number | string;
+  condition_versions?: unknown;
 };
 
 type NotificationRow = {
@@ -164,6 +165,7 @@ const ActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("generate_offer") }).strict(),
   z.object({ action: z.literal("publish_offer"), offerId: z.string().uuid() }).strict(),
   z.object({ action: z.literal("publish_proposal"), offerId: z.string().uuid() }).strict(),
+  z.object({ action: z.literal("replace_proposal"), proposalId: z.string().uuid(), offerId: z.string().uuid() }).strict(),
   z.object({ action: z.literal("approve_proposal"), proposalId: z.string().uuid(), revision: z.number().int().positive() }).strict(),
   z.object({ action: z.literal("restart_proposal"), proposalId: z.string().uuid() }).strict(),
   z.object({ action: z.literal("start_tie_poll"), optionAId: z.string().uuid(), optionBId: z.string().uuid() }).strict(),
@@ -322,6 +324,29 @@ async function latestExpiredProposal(db: Db, outingId: string): Promise<Proposal
     [outingId],
   );
   return rows[0] ?? null;
+}
+
+function matchesProposalRequest(
+  proposal: ProposalRow,
+  offer: OfferRow,
+  attendeeUserIds: string[],
+  expectedConditions: Record<string, number>,
+): boolean {
+  const proposedAttendees = parseJsonValue(proposal.attendee_user_ids, [] as string[]).sort();
+  const requestedAttendees = [...attendeeUserIds].sort();
+  const conditionVersions = parseJsonValue(
+    proposal.condition_versions,
+    {} as Record<string, number | string>,
+  );
+  return proposal.option_id === offer.option_id &&
+    proposal.activity === offer.activity &&
+    new Date(proposal.starts_at).getTime() === new Date(offer.starts_at).getTime() &&
+    proposal.estimated_cost_cents === offer.estimated_cost_cents &&
+    proposedAttendees.length === requestedAttendees.length &&
+    proposedAttendees.every((userId, index) => userId === requestedAttendees[index]) &&
+    requestedAttendees.every((userId) =>
+      Number(conditionVersions[userId]) === expectedConditions[userId]
+    );
 }
 
 export async function getOutingWorkspace(
@@ -691,6 +716,7 @@ export async function handlePlanningAction(
     case "generate_offer": result = await generateOffer(context, outing, agentFactory); break;
     case "publish_offer": result = await publishOffer(context, outingId, action.offerId); break;
     case "publish_proposal": result = await publishProposal(context, outing, action.offerId, "initial"); break;
+    case "replace_proposal": result = await publishProposal(context, outing, action.offerId, "initial", undefined, undefined, action.proposalId); break;
     case "approve_proposal": result = await approveProposal(context, outingId, action.proposalId, action.revision); break;
     case "restart_proposal": result = await restartProposal(context, outing, action.proposalId); break;
     case "start_tie_poll": result = await startTiePoll(context, outing, action.optionAId, action.optionBId); break;
@@ -815,14 +841,24 @@ async function setInterest(
       return api(409, { error: "clarification_required" });
     }
   }
+  const currentRows = await context.db.query<{ response_status: ParticipantRow["responseStatus"] }>(
+    `select response_status from participants
+      where outing_id = $1 and user_id = $2 and admission_status = 'admitted'`,
+    [outing.id, context.userId],
+  );
+  const currentStatus = currentRows[0]?.response_status;
+  if (!currentStatus) return api(404, { error: "not_found" });
+  if (currentStatus === "no_response") return api(409, { error: "response_cutoff_passed" });
+  const nextStatus = interested ? "interested" : "not_interested";
+  if (currentStatus === nextStatus) return api(200, { ok: true });
   const changed = await context.db.query<{ user_id: string }>(
     `update participants set response_status = $3, responded_at = now()
       where outing_id = $1 and user_id = $2 and admission_status = 'admitted'
-        and response_status <> 'no_response'
+        and response_status = $4 and response_status <> 'no_response'
       returning user_id`,
-    [outing.id, context.userId, interested ? "interested" : "not_interested"],
+    [outing.id, context.userId, nextStatus, currentStatus],
   );
-  if (!changed.length) return api(409, { error: "response_cutoff_passed" });
+  if (!changed.length) return api(409, { error: "response_changed" });
   await invalidatePublishedProposals(context.db, outing.id);
   return api(200, { ok: true });
 }
@@ -1315,11 +1351,11 @@ async function publishProposal(
   kind: "initial" | "restart" | "join" | "departure",
   requestId?: string,
   attendeeOverride?: string[],
+  expectedActiveProposalId?: string,
 ): Promise<ApiResponse> {
   if (outing.ended_at || outing.status === "no_agreement") {
     return api(409, { error: "outing_not_active" });
   }
-  if (!outing.cutoff_processed_at) return api(409, { error: "response_cutoff_not_reached" });
   const confirmed = await latestProposal(context.db, outing.id, "confirmed");
   if (kind === "initial" && confirmed) return api(409, { error: "plan_already_confirmed" });
   const rows = await context.db.query<OfferRow>(
@@ -1358,6 +1394,19 @@ async function publishProposal(
     return api(409, { error: eligibility.reason === "conditions_incomplete" ? "conditions_need_review" : "offer_not_feasible" });
   }
   if (new Date(candidate.startsAt) <= new Date()) return api(409, { error: "activity_already_started" });
+  const active = kind === "initial"
+    ? await latestProposal(context.db, outing.id, "published")
+    : null;
+  if (active) {
+    if (matchesProposalRequest(active, offer, attendeeUserIds, eligibility.versions)) {
+      return api(200, { proposal: toProposal(active) });
+    }
+    if (expectedActiveProposalId !== active.id) {
+      return api(409, { error: expectedActiveProposalId ? "proposal_not_current" : "proposal_already_active" });
+    }
+  } else if (expectedActiveProposalId) {
+    return api(409, { error: "proposal_not_current" });
+  }
   return createProposalRevision(context, outing, {
     optionId: offer.option_id,
     activity: offer.activity,
@@ -1368,6 +1417,8 @@ async function publishProposal(
     requestId,
     requestUserId: requestId ? context.userId : undefined,
     expectedConfirmedId: confirmed?.id ?? null,
+    expectedPublishedId: expectedActiveProposalId,
+    requireNoPublished: kind === "initial" && !expectedActiveProposalId,
     expectedConditions: eligibility.versions,
   });
 }
@@ -1385,6 +1436,7 @@ async function createProposalRevision(
     requestId?: string;
     requestUserId?: string;
     expectedConfirmedId?: string | null;
+    expectedPublishedId?: string;
     requireNoPublished?: boolean;
     expectedConditions?: Record<string, number>;
   },
@@ -1398,11 +1450,19 @@ async function createProposalRevision(
            select 1 from proposals current where current.outing_id = o.id
              and current.id = $11::uuid and current.status = 'confirmed'
          ))`;
-  const publishedGuard = input.requireNoPublished
-    ? `and not exists (
+  const publishedGuard = input.expectedPublishedId
+    ? `and exists (
+         select 1 from proposals current where current.outing_id = o.id
+           and current.id = $12::uuid and current.status = 'superseded'
+       )
+       and not exists (
          select 1 from proposals current where current.outing_id = o.id and current.status = 'published'
        )`
-    : "";
+    : input.requireNoPublished
+      ? `and not exists (
+           select 1 from proposals current where current.outing_id = o.id and current.status = 'published'
+         )`
+      : "";
   const supersedeConfirmedGuard = input.expectedConfirmedId === undefined
     ? ""
     : `and (($2::uuid is null and not exists (
@@ -1411,23 +1471,39 @@ async function createProposalRevision(
            select 1 from proposals current where current.outing_id = proposals.outing_id
              and current.id = $2::uuid and current.status = 'confirmed'
          ))`;
-  const supersedePublishedGuard = input.requireNoPublished
+  const supersedePublishedGuard = input.expectedPublishedId
+    ? `and id = $4::uuid`
+    : input.requireNoPublished
+      ? `and not exists (
+           select 1 from proposals current where current.outing_id = proposals.outing_id and current.status = 'published'
+         )`
+      : "";
+  const supersedeParams = [outing.id, input.expectedConfirmedId ?? null, input.startsAt];
+  const supersedeConditionsGuard = input.expectedPublishedId
     ? `and not exists (
-         select 1 from proposals current where current.outing_id = proposals.outing_id and current.status = 'published'
+         select 1 from jsonb_each_text($5::jsonb) expected(user_id, version)
+         left join participant_preferences pref
+           on pref.outing_id = proposals.outing_id and pref.user_id = expected.user_id
+         where pref.user_id is null
+           or coalesce(pref.conditions_version, 0) <> expected.version::int
        )`
     : "";
-  const supersedeParams = [outing.id, input.expectedConfirmedId ?? null, input.startsAt];
   const insertParams: unknown[] = [proposalId, outing.id, context.userId, input.optionId, input.activity,
     input.startsAt, input.estimatedCostCents, JSON.stringify(input.attendeeUserIds), input.kind,
     JSON.stringify(input.expectedConditions ?? {})];
   if (input.expectedConfirmedId !== undefined) insertParams.push(input.expectedConfirmedId);
+  if (input.expectedPublishedId) {
+    supersedeParams.push(input.expectedPublishedId);
+    supersedeParams.push(JSON.stringify(input.expectedConditions ?? {}));
+    insertParams.push(input.expectedPublishedId);
+  }
   const statements = [
     { text: `select id from outings where id = $1 for update`, params: [outing.id] },
     { text: `update proposals set status = 'superseded'
       where outing_id = $1 and status = 'published'
         and exists (select 1 from outings where id = $1 and ended_at is null)
         and $3::timestamptz > now()
-        ${supersedeConfirmedGuard} ${supersedePublishedGuard}`,
+        ${supersedeConfirmedGuard} ${supersedePublishedGuard} ${supersedeConditionsGuard}`,
       params: supersedeParams},
     {
       text: `insert into proposals
@@ -1494,6 +1570,12 @@ async function createProposalRevision(
   const created = await context.db.transaction<ProposalRow>(statements);
   const proposal = created[2]?.[0] as Pick<ProposalRow, "id" | "revision" | "published_at" | "expires_at"> | undefined;
   if (!proposal) {
+    if (input.expectedPublishedId) {
+      const confirmed = await latestProposal(context.db, outing.id, "confirmed");
+      return confirmed
+        ? api(409, { error: "plan_already_confirmed" })
+        : api(409, { error: "proposal_not_current" });
+    }
     if (input.expectedConfirmedId === null && input.requireNoPublished) {
       const confirmed = await latestProposal(context.db, outing.id, "confirmed");
       if (confirmed) return api(409, { error: "plan_already_confirmed" });
@@ -1501,6 +1583,9 @@ async function createProposalRevision(
       return published
         ? api(409, { error: "proposal_already_active" })
         : api(409, { error: "activity_already_started" });
+    }
+    if (input.requireNoPublished && await latestProposal(context.db, outing.id, "published")) {
+      return api(409, { error: "proposal_already_active" });
     }
     if (input.expectedConfirmedId === null) return api(409, { error: "plan_already_confirmed" });
     if (input.expectedConfirmedId !== undefined) return api(409, { error: "plan_changed" });
@@ -1915,6 +2000,9 @@ async function requestJoin(context: OwnerContext, outing: LoadedOuting): Promise
   if (outing.ended_at || outing.status === "no_agreement") return api(409, { error: "outing_not_active" });
   const confirmed = await latestProposal(context.db, outing.id, "confirmed");
   if (!confirmed) return api(409, { error: "no_confirmed_plan" });
+  if (await latestProposal(context.db, outing.id, "published")) {
+    return api(409, { error: "proposal_already_active" });
+  }
   const currentAttendees = parseJsonValue(confirmed.attendee_user_ids, [] as string[]);
   if (currentAttendees.includes(context.userId)) return api(409, { error: "already_attending" });
   if (new Date(confirmed.starts_at) <= new Date()) return api(409, { error: "activity_already_started" });
@@ -1979,6 +2067,7 @@ async function requestJoin(context: OwnerContext, outing: LoadedOuting): Promise
     requestId: requestRows[0].id,
     requestUserId: context.userId,
     expectedConfirmedId: confirmed.id,
+    requireNoPublished: true,
     expectedConditions: eligibility.versions,
   });
   if (revision.status >= 400) {
@@ -1991,6 +2080,9 @@ async function requestDeparture(context: OwnerContext, outing: LoadedOuting): Pr
   if (outing.ended_at || outing.status !== "confirmed") return api(409, { error: "no_confirmed_plan" });
   const confirmed = await latestProposal(context.db, outing.id, "confirmed");
   if (!confirmed) return api(409, { error: "no_confirmed_plan" });
+  if (await latestProposal(context.db, outing.id, "published")) {
+    return api(409, { error: "proposal_already_active" });
+  }
   const currentAttendees = parseJsonValue(confirmed.attendee_user_ids, [] as string[]);
   if (!currentAttendees.includes(context.userId)) return api(409, { error: "not_attending" });
   if (new Date(confirmed.starts_at) <= new Date()) return api(409, { error: "activity_already_started" });
@@ -2045,6 +2137,9 @@ async function requestDeparture(context: OwnerContext, outing: LoadedOuting): Pr
     );
     if (!renegotiation) {
       await context.db.query(`update departure_requests set status = 'expired' where id = $1 and status = 'pending'`, [requestRows[0].id]);
+      if (await latestProposal(context.db, outing.id, "published")) {
+        return api(409, { error: "proposal_already_active" });
+      }
       return api(409, { error: "plan_changed" });
     }
     return api(200, { status: "renegotiation_required" });
@@ -2060,6 +2155,7 @@ async function requestDeparture(context: OwnerContext, outing: LoadedOuting): Pr
     requestId: requestRows[0].id,
     requestUserId: context.userId,
     expectedConfirmedId: confirmed.id,
+    requireNoPublished: true,
     expectedConditions: eligibility.versions,
   });
   if (revision.status >= 400) {
@@ -2082,6 +2178,9 @@ async function beginDepartureRenegotiation(
        update proposals set status = 'superseded'
         where id = $1::uuid and outing_id = $2::uuid and status = 'confirmed'
           and exists (select 1 from locked)
+          and not exists (
+            select 1 from proposals current where current.outing_id = $2::uuid and current.status = 'published'
+          )
         returning id, attendee_user_ids
      ), accepted as (
        update departure_requests set status = 'accepted', proposal_id = null

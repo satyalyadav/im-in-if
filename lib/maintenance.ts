@@ -102,6 +102,10 @@ async function runSweep(db: Db, timestamp: string): Promise<SweepResult> {
            where p.outing_id = due.id
              and p.admission_status = 'admitted'
              and p.response_status = 'interested'
+        )
+        and not exists (
+          select 1 from proposals p
+           where p.outing_id = due.id and p.status = 'confirmed'
         )`,
     [timestamp],
   );
@@ -178,6 +182,10 @@ export async function processOutingDeadlines(
         and not exists (
           select 1 from participants p where p.outing_id = o.id
             and p.admission_status = 'admitted' and p.response_status = 'interested'
+        )
+        and not exists (
+          select 1 from proposals p
+           where p.outing_id = o.id and p.status = 'confirmed'
         )`,
     [outingId, timestamp],
   );

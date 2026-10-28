@@ -46,9 +46,9 @@ For the demo, admission and final-approval event notices are in scope only for r
 
 ## Response cutoff and confirmation
 
-The starter must choose a response-cutoff date and time; the app does not set a default. A person who has not replied by the cutoff is not part of the current proposed group. This establishes only that they did not respond in time; their reason is unknown. It must not be interpreted as a decline, loss of interest, or unavailability.
+The starter must choose a response-cutoff date and time; the app does not set a default. This deadline closes interest collection; it does not delay publishing an offer for approval. Anyone who has not replied is not eligible for the proposed attendee group. Silence does not explain why they did not reply and must not be treated as a decline or unavailability.
 
-After the cutoff, the process reassesses the willing attendee set against every remaining person's conditions, including strict limits and attendance dependencies. A missing named person can make another participant ineligible. Earlier approvals for a larger group do not transfer to the revised plan.
+For a proposal made after the cutoff, the process reassesses the interested attendee set against each person's conditions, including strict limits and attendance dependencies. A missing named person can make another participant ineligible. Earlier approvals for a larger group do not transfer to the revised plan.
 
 Final approval is separate from the response cutoff. After conditions have been gathered and a proposed attendee set is ready, each person's own agent asks them to approve the exact activity, time, estimated cost, and attendee list. One shared deadline applies to everyone included in the proposal. It is 30 minutes after the approval request is published, or the activity start if that comes sooner. Opening the page or receiving a delayed email does not reset the deadline. If any included person has not approved by then, the proposal expires unconfirmed. Silence is not approval, and expiry does not automatically remove anyone or reshuffle the group.
 

@@ -91,12 +91,14 @@ const ERROR_COPY: Record<string, string> = {
   conditions_need_review: "Tell your agent what would make this outing work before responding.",
   confirmed_conditions_locked: "Conditions are locked for the confirmed plan. Request to leave if it no longer works for you.",
   response_cutoff_passed: "The response cutoff has passed.",
+  response_changed: "Your interest response changed elsewhere. Refresh and review it before trying again.",
   offer_not_feasible: "That offer conflicts with one or more strict conditions.",
   option_unavailable: "That draft uses an option that is no longer available. Ask your agent for a new offer or add a manual option.",
   no_options: "Add an option with a date, time, and estimated cost, or ask your agent to draft one from your private chat.",
   clarification_required: "Answer the question in your private chat, then ask your agent for an offer again.",
   tie_options_not_feasible: "Both options must satisfy every attendee's strict conditions.",
   proposal_expired: "This proposal expired without reshuffling the attendee list.",
+  proposal_already_active: "A plan is already waiting for approval. Its deadline and approvals stayed unchanged. Finish or wait for that request before starting another.",
   proposal_not_current: "This proposal was replaced by a newer revision.",
   activity_already_started: "This activity has already started.",
   verified_email_required: "Choose an email verified on your signed-in account.",
@@ -121,6 +123,13 @@ function dateTime(value: string, timeZone: string): string {
 
 function tagsFromText(value: string): string[] {
   return [...new Set(value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))];
+}
+
+function sameAttendees(left: string[], right: string[]): boolean {
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.length === sortedRight.length &&
+    sortedLeft.every((userId, index) => userId === sortedRight[index]);
 }
 
 function errorText(code: string): string {
@@ -231,12 +240,16 @@ function CatalogPanel({ workspace, busy, act }: { workspace: Workspace; busy: bo
 }
 
 function OfferPanel({ workspace, busy, act }: { workspace: Workspace; busy: boolean; act: ActionRunner }) {
-  const canPublishPlan = Boolean(workspace.outing.cutoffProcessedAt) && !workspace.confirmedProposal;
+  const canRequestConfirmation = !workspace.outing.endedAt && !workspace.confirmedProposal;
+  async function publishDraftAndRequestConfirmation(offerId: string) {
+    const published = await act({ action: "publish_offer", offerId });
+    if (published) await act({ action: "publish_proposal", offerId });
+  }
   return (
     <section className="planner-card" aria-labelledby="offers-title">
       <p className="playbill-kicker">Negotiation</p>
       <h2 id="offers-title">Offers from the group</h2>
-      <p className="planner-help">Offers are suggestions. Only you can publish your draft, and only people can approve a final proposal.</p>
+      <p className="planner-help">A private draft stays visible only to you. Publishing it shares the offer and asks every proposed attendee, including its owner, to approve the exact plan. The response cutoff closes interest collection, not confirmation.</p>
       {workspace.myConditionsReady && workspace.myResponseStatus === "interested" ? (
         <PlannerButton disabled={busy} onClick={() => void act({ action: "generate_offer" })}>
           Ask agent for an offer
@@ -250,7 +263,7 @@ function OfferPanel({ workspace, busy, act }: { workspace: Workspace; busy: bool
           <p>{offer.activity}</p>
           <p>{dateTime(offer.startsAt, workspace.outing.cutoffTimeZone)} · Estimated {money(offer.estimatedCostCents)} per person</p>
           {offer.privateNote ? <p className="private-note">Only you see this note: {offer.privateNote}</p> : null}
-          <PlannerButton disabled={busy} onClick={() => void act({ action: "publish_offer", offerId: offer.id })}>Publish this offer</PlannerButton>
+          <PlannerButton disabled={busy} onClick={() => void publishDraftAndRequestConfirmation(offer.id)}>Publish and ask everyone to confirm</PlannerButton>
         </article>
       ))}
 
@@ -258,6 +271,13 @@ function OfferPanel({ workspace, busy, act }: { workspace: Workspace; busy: bool
         <div className="offer-list">
           {workspace.offers.map((offer) => {
             const owner = workspace.participants.find((person) => person.userId === offer.ownerUserId);
+            const activeProposal = workspace.proposal;
+            const matchesActiveProposal = activeProposal &&
+              activeProposal.optionId === offer.optionId &&
+              activeProposal.activity === offer.activity &&
+              new Date(activeProposal.startsAt).getTime() === new Date(offer.startsAt).getTime() &&
+              activeProposal.estimatedCostCents === offer.estimatedCostCents &&
+              sameAttendees(activeProposal.attendeeUserIds, offer.attendeeUserIds);
             return (
               <article className="offer-card" key={offer.id}>
                 <p className="playbill-kicker">Offer from {owner?.displayName ?? "a participant"}</p>
@@ -269,9 +289,20 @@ function OfferPanel({ workspace, busy, act }: { workspace: Workspace; busy: bool
                   </p>
                 ) : null}
                 <p>{offer.attendeeUserIds.length} proposed attendee{offer.attendeeUserIds.length === 1 ? "" : "s"}</p>
-                {canPublishPlan ? (
+                {canRequestConfirmation && activeProposal && !matchesActiveProposal ? (
+                  <details className="replace-proposal">
+                    <summary>Replace the plan waiting for approval</summary>
+                    <p className="planner-help">This creates a new revision. Everyone on the new attendee list must approve it. Current approvals will not carry over.</p>
+                    <PlannerButton disabled={busy} onClick={() => void act({
+                      action: "replace_proposal",
+                      proposalId: activeProposal.id,
+                      offerId: offer.id,
+                    })}>Replace the plan and ask everyone again</PlannerButton>
+                  </details>
+                ) : null}
+                {canRequestConfirmation && (!activeProposal || matchesActiveProposal) ? (
                   <PlannerButton disabled={busy} onClick={() => void act({ action: "publish_proposal", offerId: offer.id })}>
-                    Put this plan up for confirmation
+                    Ask everyone to confirm this plan
                   </PlannerButton>
                 ) : null}
               </article>
@@ -279,7 +310,7 @@ function OfferPanel({ workspace, busy, act }: { workspace: Workspace; busy: bool
           })}
         </div>
       ) : <p className="empty-light">Published offers appear here. Each person’s draft and private note stay private.</p>}
-      {!workspace.outing.cutoffProcessedAt ? <p className="hint dark-hint">Offers can be proposed after the response cutoff.</p> : null}
+      {!workspace.confirmedProposal && !workspace.outing.endedAt ? <p className="hint dark-hint">You can ask everyone to confirm a published offer before or after the response cutoff.</p> : null}
     </section>
   );
 }
@@ -356,7 +387,7 @@ function AgreementPanel({ workspace, busy, act }: { workspace: Workspace; busy: 
         </article>
       ) : null}
       {!proposal && !confirmedProposal && !expiredProposal && !myTiePoll ? (
-        <p className="empty-light">A plan appears here after the response cutoff and offer review.</p>
+        <p className="empty-light">No plan is waiting for approval. Publish a private draft or ask everyone to confirm one of the published offers above.</p>
       ) : null}
       {workspace.outing.cutoffProcessedAt && !proposal && !confirmedProposal && tieOptions.length >= 2 && workspace.myResponseStatus === "interested" ? (
         <details className="tie-setup">
