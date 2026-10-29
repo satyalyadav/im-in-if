@@ -44,7 +44,7 @@ A condition linking one participant's attendance to a named person's attendance.
 A condition that sets the number of people needed for a participant to join.
 
 **Response cutoff**:
-The starter-set deadline for collecting interest. It determines when unanswered participants are excluded from the current proposed group; it does not delay confirmation. Silence does not explain why someone did not reply.
+An optional starter-set deadline for collecting interest. When set, it determines when unanswered participants are excluded from the current proposed group; it does not delay confirmation. Without a cutoff, silence alone does not automatically exclude a participant or explain why they have not replied.
 
 **Tentative agreement**:
 A plan the agents have negotiated that remains subject to approval by the people involved.
@@ -53,7 +53,10 @@ A plan the agents have negotiated that remains subject to approval by the people
 A participant's explicit approval of the activity, time, estimated cost, and attendee list. Their own agent asks for approval; silence does not count.
 
 **Final approval deadline**:
-The shared deadline for everyone included in a proposal to confirm it. It is 30 minutes after the approval request is published, or the activity start if sooner. Opening a page or delayed email does not reset it.
+The shared deadline for everyone included in a proposal to confirm it, at the proposed activity's start time. Everyone must explicitly approve the same current proposal before that time; changing its details requires fresh approval.
+
+**Email invitation**:
+A starter's invitation to a specific email address that grants admission when the recipient signs in with that verified address. It does not express the recipient's interest or confirm attendance.
 
 **Admission request**:
 A signed-in invitee's request for the starter to admit them to the planning group. Until approved, they cannot see group details or join negotiation; admission alone does not make them an attendee or confirm attendance.
