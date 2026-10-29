@@ -11,7 +11,22 @@ This is a read-only prototype with canned sample data.
     <title>I'm in if... prototype</title>
     <style>
       :root {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-family: "Instrument Sans Variable", "Instrument Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+        --reviewer-foreground: var(--foreground, #131f1a);
+        --reviewer-muted: var(--muted-foreground, #5d7264);
+        --reviewer-surface: var(--card, #f8fbf5);
+        --reviewer-muted-surface: var(--muted, #e8eee3);
+        --reviewer-border: var(--border, #b7c7b9);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --reviewer-foreground: var(--foreground, #e8eee3);
+          --reviewer-muted: var(--muted-foreground, #93a89a);
+          --reviewer-surface: var(--card, #172b24);
+          --reviewer-muted-surface: var(--muted, #10201b);
+          --reviewer-border: var(--border, rgba(232, 238, 227, 0.28));
+        }
       }
 
       * {
@@ -27,8 +42,7 @@ This is a read-only prototype with canned sample data.
       }
 
       body {
-        color: var(--foreground, #202124);
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--reviewer-foreground);
         line-height: 1.45;
       }
 
@@ -49,7 +63,7 @@ This is a read-only prototype with canned sample data.
       }
 
       :focus-visible {
-        outline: 2px solid #0a84ff;
+        outline: 2px solid var(--reviewer-foreground);
         outline-offset: 3px;
       }
 
@@ -59,22 +73,38 @@ This is a read-only prototype with canned sample data.
       }
 
       .prototype-app {
-        --app-foreground: var(--foreground, #202124);
-        --app-muted: var(--muted, #f0f1f4);
-        --app-muted-foreground: var(--muted-foreground, #6c7079);
-        --app-card: var(--card, #fff);
-        --app-border: var(--border, rgba(30, 34, 42, 0.14));
+        --app-house: #10201b;
+        --app-house-soft: #172b24;
+        --app-screen: #e8eee3;
+        --app-screen-bright: #f8fbf5;
+        --app-gold: #f2c766;
+        --app-ink: #131f1a;
+        --app-muted-foreground: #5d7264;
+        --app-line: #b7c7b9;
         min-height: 0;
         padding: 0;
         border: 0;
         background: transparent;
-        color: var(--app-foreground);
+        color: var(--app-ink);
+        font-family: "Instrument Sans Variable", "Instrument Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
       }
 
       .app-main {
         width: min(680px, 100%);
         margin: 0 auto;
-        padding: 0 14px 82px;
+        padding: 0 clamp(10px, 2.2vw, 18px) 72px;
+        background: var(--app-screen);
+        color: var(--app-ink);
+      }
+
+      .prototype-app :focus-visible,
+      dialog :focus-visible {
+        outline-color: var(--app-ink);
+      }
+
+      .variant-switcher :focus-visible,
+      .review-tools :focus-visible {
+        outline-color: var(--reviewer-foreground);
       }
 
       h1,
@@ -88,14 +118,15 @@ This is a read-only prototype with canned sample data.
         align-items: center;
         justify-content: space-between;
         gap: 14px;
-        padding: 19px 0 12px;
+        padding: 15px 0 10px;
       }
 
       .home-head h1 {
         margin: 0;
-        font-size: 22px;
-        font-weight: 650;
-        letter-spacing: -0.025em;
+        font-family: "Newsreader Variable", "Newsreader", "Iowan Old Style", Georgia, serif;
+        font-size: 21px;
+        font-weight: 500;
+        letter-spacing: -0.015em;
       }
 
       .primary-button,
@@ -106,42 +137,44 @@ This is a read-only prototype with canned sample data.
         align-items: center;
         justify-content: center;
         gap: 7px;
-        border-radius: 999px;
-        padding: 7px 14px;
+        border-radius: 0;
+        padding: 7px 13px;
         font-size: 14px;
         font-weight: 600;
         text-decoration: none;
       }
 
       .primary-button {
-        border: 1px solid #0a84ff;
-        background: #0a84ff;
-        color: #fff;
+        border: 1px solid var(--app-house-soft);
+        background: var(--app-house-soft);
+        color: var(--app-screen-bright);
       }
 
       .primary-button:hover {
-        background: #0877e5;
+        background: var(--app-house);
       }
 
       .secondary-button {
-        border: 1px solid var(--app-border);
-        background: transparent;
-        color: var(--app-foreground);
+        border: 1px solid var(--app-line);
+        background: var(--app-screen-bright);
+        color: var(--app-ink);
       }
 
       .secondary-button:hover {
-        background: var(--app-muted);
+        background: var(--app-screen);
       }
 
       .text-button {
         border: 0;
         background: transparent;
-        color: #0a84ff;
-        padding: 6px 2px;
+        color: var(--app-house-soft);
+        padding: 6px 0;
+        text-decoration: underline;
+        text-underline-offset: 3px;
       }
 
       .outing-list {
-        border-top: 1px solid var(--app-border);
+        border-top: 1px solid var(--app-line);
       }
 
       .outing-row {
@@ -150,20 +183,20 @@ This is a read-only prototype with canned sample data.
         grid-template-columns: minmax(0, 1fr) auto;
         gap: 3px 12px;
         border: 0;
-        border-bottom: 1px solid var(--app-border);
+        border-bottom: 1px solid var(--app-line);
         background: transparent;
         color: inherit;
-        padding: 13px 2px;
+        padding: 11px 2px;
         text-align: left;
       }
 
       .outing-row:hover {
-        background: color-mix(in srgb, var(--app-muted) 45%, transparent);
+        background: color-mix(in srgb, var(--app-screen-bright) 72%, transparent);
       }
 
       .outing-row-title {
         font-size: 16px;
-        font-weight: 650;
+        font-weight: 600;
       }
 
       .outing-row-preview {
@@ -188,8 +221,10 @@ This is a read-only prototype with canned sample data.
         grid-template-columns: minmax(76px, 1fr) auto minmax(76px, 1fr);
         align-items: center;
         gap: 8px;
-        border-bottom: 1px solid var(--app-border);
-        padding: 9px 0 12px;
+        border-bottom: 1px solid var(--app-line);
+        background: #f2f6ee;
+        color: var(--app-muted-foreground);
+        padding: 8px 0 10px;
       }
 
       .chat-header .text-button {
@@ -201,9 +236,11 @@ This is a read-only prototype with canned sample data.
         max-width: min(45vw, 310px);
         overflow: hidden;
         margin: 0;
-        font-size: 17px;
-        font-weight: 650;
-        letter-spacing: -0.02em;
+        font-family: "Newsreader Variable", "Newsreader", "Iowan Old Style", Georgia, serif;
+        font-size: 18px;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+        color: var(--app-ink);
         text-align: center;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -223,8 +260,8 @@ This is a read-only prototype with canned sample data.
       .message-list {
         display: flex;
         flex-direction: column;
-        gap: 12px;
-        margin: 15px 0 12px;
+        gap: 11px;
+        margin: 13px 0 10px;
         padding: 0;
         list-style: none;
       }
@@ -245,37 +282,44 @@ This is a read-only prototype with canned sample data.
       }
 
       .message-bubble {
-        max-width: min(88%, 520px);
-        border-radius: 18px;
-        background: var(--app-muted);
-        color: var(--app-foreground);
-        padding: 9px 13px;
-        font-size: 14px;
+        max-width: min(92%, 520px);
+        border: 1px solid var(--app-line);
+        border-radius: 0;
+        background: var(--app-screen-bright);
+        color: var(--app-ink);
+        padding: 9px 12px;
+        font-family: "Newsreader Variable", "Newsreader", "Iowan Old Style", Georgia, serif;
+        font-size: 15px;
+        line-height: 1.45;
         overflow-wrap: anywhere;
         white-space: pre-wrap;
       }
 
+      .message.agent .message-bubble {
+        border-left: 3px solid #4f7a63;
+      }
+
       .message.you .message-bubble {
-        border-radius: 18px 18px 5px 18px;
-        background: #0a84ff;
-        color: #fff;
+        border-color: var(--app-gold);
+        background: var(--app-house-soft);
+        color: var(--app-screen-bright);
       }
 
       .plan-card {
-        width: min(470px, 88%);
+        width: min(470px, 100%);
         margin-top: 2px;
-        border: 1px solid var(--app-border);
-        border-radius: 14px;
-        background: var(--app-card);
-        color: var(--app-foreground);
-        padding: 10px 12px;
-        box-shadow: 0 1px 3px rgba(20, 24, 32, 0.06);
+        border: 1px solid var(--app-line);
+        border-left: 3px solid var(--app-house-soft);
+        border-radius: 0;
+        background: var(--app-screen-bright);
+        color: var(--app-ink);
+        padding: 8px 10px;
       }
 
       .plan-detail {
         display: grid;
-        grid-template-columns: 76px minmax(0, 1fr);
-        gap: 8px;
+        grid-template-columns: 72px minmax(0, 1fr);
+        gap: 7px;
         padding: 4px 0;
         font-size: 13px;
         line-height: 1.35;
@@ -283,7 +327,7 @@ This is a read-only prototype with canned sample data.
       }
 
       .plan-detail + .plan-detail {
-        border-top: 1px solid var(--app-border);
+        border-top: 1px solid var(--app-line);
       }
 
       .plan-label {
@@ -291,35 +335,33 @@ This is a read-only prototype with canned sample data.
       }
 
       .plan-value {
-        font-weight: 550;
+        font-weight: 600;
       }
 
       .message-form {
         position: sticky;
-        bottom: 70px;
+        bottom: 62px;
         display: flex;
         align-items: flex-end;
-        gap: 8px;
+        gap: 9px;
         margin: 9px 0 0;
-        border: 1px solid var(--app-border);
-        border-radius: 22px;
-        background: var(--app-card);
-        padding: 5px 6px 5px 13px;
-        box-shadow: 0 2px 10px rgba(20, 24, 32, 0.08);
+        border-top: 1px solid var(--app-line);
+        background: #f2f6ee;
+        padding: 10px 0 0;
       }
 
       .message-form textarea {
         min-width: 0;
-        min-height: 38px;
-        max-height: 116px;
+        min-height: 42px;
+        max-height: 120px;
         flex: 1;
         align-self: center;
-        resize: none;
-        border: 0;
-        outline: 0;
-        background: transparent;
-        color: var(--app-foreground);
-        padding: 9px 0;
+        resize: vertical;
+        border: 1px solid #a9bcab;
+        border-radius: 0;
+        background: #fffdf7;
+        color: var(--app-ink);
+        padding: 9px 10px;
         line-height: 1.35;
       }
 
@@ -329,51 +371,52 @@ This is a read-only prototype with canned sample data.
       }
 
       .message-form .primary-button {
-        min-height: 35px;
+        min-height: 42px;
         flex: 0 0 auto;
-        padding: 6px 13px;
+        padding: 6px 12px;
       }
 
       .variant-b .message-list {
         gap: 9px;
-        margin-top: 11px;
+        margin-top: 10px;
       }
 
       .variant-b .message-bubble {
-        padding: 8px 11px;
-        font-size: 13px;
+        padding: 7px 10px;
+        font-size: 14px;
       }
 
       .variant-b .plan-card {
-        width: min(430px, 88%);
-        padding: 8px 10px;
+        width: min(430px, 100%);
+        padding: 7px 9px;
       }
 
       .variant-c .message-bubble {
-        border-radius: 15px;
+        background: #f2f6ee;
       }
 
       .variant-c .message.you .message-bubble {
-        border-radius: 15px 15px 4px 15px;
-        background: #168af2;
+        border-color: var(--app-house);
+        background: var(--app-house);
       }
 
       .variant-c .message.agent .message-bubble {
-        background: color-mix(in srgb, var(--app-muted) 76%, #dceaff);
+        border-left-color: #78917e;
       }
 
       .review-tools {
         width: min(680px, 100%);
-        margin: 20px auto 90px;
-        padding: 0 14px;
-        color: var(--app-muted-foreground, #6c7079);
+        margin: 14px auto 72px;
+        padding: 0 clamp(10px, 2.2vw, 18px);
+        color: var(--reviewer-muted);
         font-size: 12px;
       }
 
       .review-details {
         margin-top: 10px;
-        border-top: 1px solid var(--app-border, rgba(30, 34, 42, 0.14));
+        border-top: 1px solid var(--reviewer-border);
         padding-top: 9px;
+        color: var(--reviewer-foreground);
       }
 
       .review-details summary {
@@ -384,6 +427,7 @@ This is a read-only prototype with canned sample data.
 
       .demo-copy {
         margin: 9px 0;
+        color: var(--reviewer-muted);
         line-height: 1.5;
       }
 
@@ -397,11 +441,21 @@ This is a read-only prototype with canned sample data.
       .demo-select-wrap select {
         min-height: 33px;
         max-width: 100%;
-        border: 1px solid var(--app-border);
-        border-radius: 8px;
-        background: var(--app-card);
-        color: var(--app-foreground);
+        border: 1px solid var(--reviewer-border);
+        border-radius: 0;
+        background: var(--reviewer-surface);
+        color: var(--reviewer-foreground);
         padding: 4px 8px;
+      }
+
+      .review-tools .secondary-button {
+        border: 1px solid var(--reviewer-border);
+        background: var(--reviewer-surface);
+        color: var(--reviewer-foreground);
+      }
+
+      .review-tools .secondary-button:hover {
+        background: var(--reviewer-muted-surface);
       }
 
       .demo-buttons {
@@ -421,9 +475,10 @@ This is a read-only prototype with canned sample data.
         max-height: 430px;
         overflow: auto;
         margin: 10px 0 0;
-        border-radius: 8px;
-        background: var(--app-muted);
-        color: var(--app-foreground);
+        border: 1px solid var(--reviewer-border);
+        border-radius: 0;
+        background: var(--reviewer-muted-surface);
+        color: var(--reviewer-foreground);
         padding: 12px;
         font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
         white-space: pre-wrap;
@@ -441,11 +496,10 @@ This is a read-only prototype with canned sample data.
         align-items: center;
         gap: 4px;
         transform: translateX(-50%);
-        border: 1px solid rgba(0, 0, 0, 0.12);
-        border-radius: 999px;
-        background: #fff;
-        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.2);
-        color: #202124;
+        border: 1px solid var(--reviewer-border);
+        border-radius: 0;
+        background: var(--reviewer-surface);
+        color: var(--reviewer-foreground);
         padding: 4px;
       }
 
@@ -455,15 +509,15 @@ This is a read-only prototype with canned sample data.
         height: 34px;
         flex: 0 0 34px;
         place-items: center;
-        border: 0;
-        border-radius: 50%;
+        border: 1px solid var(--reviewer-border);
+        border-radius: 0;
         background: transparent;
         color: inherit;
         font-size: 20px;
       }
 
       .variant-switcher button:hover {
-        background: rgba(0, 0, 0, 0.08);
+        background: var(--reviewer-muted-surface);
       }
 
       .variant-name {
@@ -487,25 +541,28 @@ This is a read-only prototype with canned sample data.
 
       dialog {
         width: min(420px, calc(100% - 26px));
-        border: 1px solid var(--app-border, rgba(30, 34, 42, 0.14));
-        border-radius: 18px;
-        background: var(--app-card, #fff);
-        color: var(--app-foreground, #202124);
+        --app-ink: #131f1a;
+        border: 1px solid #b7c7b9;
+        border-radius: 0;
+        background: #f8fbf5;
+        color: #131f1a;
         padding: 18px;
       }
 
       dialog::backdrop {
-        background: rgba(0, 0, 0, 0.36);
+        background: rgba(16, 32, 27, 0.58);
       }
 
       dialog h2 {
         margin: 0 0 7px;
+        font-family: "Newsreader Variable", "Newsreader", "Iowan Old Style", Georgia, serif;
         font-size: 19px;
+        font-weight: 500;
       }
 
       dialog p {
         margin: 0 0 13px;
-        color: var(--app-muted-foreground, #6c7079);
+        color: #5d7264;
         font-size: 13px;
         line-height: 1.5;
       }
@@ -525,11 +582,27 @@ This is a read-only prototype with canned sample data.
       .field {
         width: 100%;
         min-height: 41px;
-        border: 1px solid var(--app-border);
-        border-radius: 10px;
-        background: transparent;
-        color: var(--app-foreground);
+        border: 1px solid #a9bcab;
+        border-radius: 0;
+        background: #fffdf7;
+        color: #131f1a;
         padding: 8px 10px;
+      }
+
+      dialog .primary-button {
+        border: 1px solid #172b24;
+        background: #172b24;
+        color: #f8fbf5;
+      }
+
+      dialog .primary-button:hover {
+        background: #10201b;
+      }
+
+      dialog .secondary-button {
+        border: 1px solid #b7c7b9;
+        background: #f8fbf5;
+        color: #131f1a;
       }
 
       .dialog-actions {
@@ -541,7 +614,7 @@ This is a read-only prototype with canned sample data.
       .invite-result {
         min-height: 18px;
         margin: 0;
-        color: #0a84ff;
+        color: #4f7a63;
         font-weight: 600;
       }
 
