@@ -1,29 +1,35 @@
 <!--
-Question: Can someone plan through their personal agent without managing separate planning sections?
-Three variants on the home route: A Conversation, B Focus, and C Messenger. Throwaway UI with sample data.
+Question: Can a personal agent help friends plan in one familiar chat?
+Three variants share the same simple conversation, switchable with ?variant=.
+This is a read-only prototype with canned sample data.
 -->
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="dark">
     <title>I'm in if... prototype</title>
     <style>
       :root {
-        color-scheme: dark;
-        font-family: "Instrument Sans Variable", "Instrument Sans", system-ui, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
 
       * {
         box-sizing: border-box;
       }
 
+      html,
       body {
+        min-width: 320px;
         margin: 0;
-        color: var(--foreground, #e8eee3);
-        font-family: "Instrument Sans Variable", "Instrument Sans", system-ui, sans-serif;
-        line-height: 1.5;
+        overflow-x: hidden;
+        background: transparent;
+      }
+
+      body {
+        color: var(--foreground, #202124);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.45;
       }
 
       button,
@@ -43,84 +49,32 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
       }
 
       :focus-visible {
-        outline: 2px solid var(--primary, #f2c766);
+        outline: 2px solid #0a84ff;
         outline-offset: 3px;
       }
 
+      #prototype {
+        min-height: 0;
+        background: transparent;
+      }
+
       .prototype-app {
-        --app-background: var(--background, #10201b);
-        --app-foreground: var(--foreground, #e8eee3);
-        --app-muted: var(--muted, #172b24);
-        --app-muted-foreground: var(--muted-foreground, #93a89a);
-        --app-card: var(--card, #172b24);
-        --app-primary: var(--primary, #f2c766);
-        --app-primary-foreground: var(--primary-foreground, #10201b);
-        --app-border: var(--border, rgba(232, 238, 227, 0.19));
-        --app-radius: var(--radius, 16px);
-        min-height: 680px;
-        padding-bottom: 132px;
-        color: var(--app-foreground);
-      }
-
-      .brand-bar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 18px;
-        padding: 15px clamp(16px, 4vw, 30px);
-        border-bottom: 1px solid var(--app-border);
-      }
-
-      .wordmark {
+        --app-foreground: var(--foreground, #202124);
+        --app-muted: var(--muted, #f0f1f4);
+        --app-muted-foreground: var(--muted-foreground, #6c7079);
+        --app-card: var(--card, #fff);
+        --app-border: var(--border, rgba(30, 34, 42, 0.14));
+        min-height: 0;
         padding: 0;
         border: 0;
-        background: none;
+        background: transparent;
         color: var(--app-foreground);
-        font-family: "Newsreader Variable", Newsreader, Georgia, serif;
-        font-size: 25px;
-        font-weight: 500;
-        letter-spacing: -0.035em;
-      }
-
-      .wordmark span {
-        color: var(--app-primary);
-      }
-
-      .brand-side,
-      .account {
-        display: flex;
-        align-items: center;
-      }
-
-      .brand-side {
-        gap: 18px;
-      }
-
-      .sample-label {
-        color: var(--app-muted-foreground);
-        font-size: 12px;
-      }
-
-      .account {
-        gap: 9px;
-        font-size: 13px;
-      }
-
-      .avatar {
-        display: grid;
-        width: 30px;
-        height: 30px;
-        place-items: center;
-        border-radius: 50%;
-        background: var(--app-primary);
-        color: var(--app-primary-foreground);
-        font-size: 11px;
-        font-weight: 700;
       }
 
       .app-main {
-        width: min(920px, calc(100% - 36px));
+        width: min(680px, 100%);
         margin: 0 auto;
+        padding: 0 14px 82px;
       }
 
       h1,
@@ -129,54 +83,44 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
         margin-top: 0;
       }
 
-      h1,
-      h2,
-      .focus-copy {
-        font-family: "Newsreader Variable", Newsreader, Georgia, serif;
-        font-weight: 450;
+      .home-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 19px 0 12px;
+      }
+
+      .home-head h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 650;
         letter-spacing: -0.025em;
-      }
-
-      h1 {
-        margin-bottom: 9px;
-        font-size: clamp(36px, 5vw, 50px);
-        line-height: 1.04;
-      }
-
-      h2 {
-        font-size: 27px;
-        line-height: 1.15;
-      }
-
-      .muted {
-        color: var(--app-muted-foreground);
       }
 
       .primary-button,
       .secondary-button,
-      .quiet-button,
       .text-button {
         display: inline-flex;
-        min-height: 42px;
+        min-height: 38px;
         align-items: center;
         justify-content: center;
-        gap: 8px;
+        gap: 7px;
         border-radius: 999px;
-        padding: 9px 16px;
+        padding: 7px 14px;
         font-size: 14px;
         font-weight: 600;
         text-decoration: none;
-        transition: background-color 120ms ease, border-color 120ms ease;
       }
 
       .primary-button {
-        border: 1px solid var(--app-primary);
-        background: var(--app-primary);
-        color: var(--app-primary-foreground);
+        border: 1px solid #0a84ff;
+        background: #0a84ff;
+        color: #fff;
       }
 
       .primary-button:hover {
-        filter: brightness(1.04);
+        background: #0877e5;
       }
 
       .secondary-button {
@@ -185,46 +129,15 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
         color: var(--app-foreground);
       }
 
-      .secondary-button:hover,
-      .quiet-button:hover {
+      .secondary-button:hover {
         background: var(--app-muted);
       }
 
-      .quiet-button {
-        min-height: 36px;
-        border: 1px solid transparent;
-        background: transparent;
-        color: var(--app-muted-foreground);
-        padding: 6px 11px;
-        font-size: 13px;
-      }
-
       .text-button {
-        min-height: 36px;
         border: 0;
         background: transparent;
-        color: var(--app-muted-foreground);
-        padding: 4px 0;
-        font-weight: 500;
-      }
-
-      .home-head {
-        display: flex;
-        align-items: flex-end;
-        justify-content: space-between;
-        gap: 20px;
-        margin: 42px 0 25px;
-      }
-
-      .home-head p,
-      .focus-home p,
-      .messenger-home p {
-        margin-bottom: 0;
-        color: var(--app-muted-foreground);
-      }
-
-      .home-head h1 {
-        margin-bottom: 8px;
+        color: #0a84ff;
+        padding: 6px 2px;
       }
 
       .outing-list {
@@ -235,23 +148,22 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
         display: grid;
         width: 100%;
         grid-template-columns: minmax(0, 1fr) auto;
-        gap: 4px 18px;
+        gap: 3px 12px;
         border: 0;
         border-bottom: 1px solid var(--app-border);
         background: transparent;
         color: inherit;
-        padding: 19px 8px;
+        padding: 13px 2px;
         text-align: left;
       }
 
       .outing-row:hover {
-        background: rgba(255, 255, 255, 0.035);
+        background: color-mix(in srgb, var(--app-muted) 45%, transparent);
       }
 
       .outing-row-title {
-        font-family: "Newsreader Variable", Newsreader, Georgia, serif;
-        font-size: 23px;
-        line-height: 1.2;
+        font-size: 16px;
+        font-weight: 650;
       }
 
       .outing-row-preview {
@@ -271,577 +183,249 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
         font-size: 12px;
       }
 
-      .focus-home {
+      .chat-header {
         display: grid;
-        grid-template-columns: minmax(0, 1.1fr) minmax(250px, 0.9fr);
+        grid-template-columns: minmax(76px, 1fr) auto minmax(76px, 1fr);
         align-items: center;
-        gap: clamp(28px, 7vw, 82px);
-        margin: 62px 0 0;
-      }
-
-      .focus-home h1 {
-        max-width: 540px;
-        font-size: clamp(42px, 6vw, 62px);
-      }
-
-      .focus-home .focus-lede {
-        max-width: 420px;
-        margin: 0 0 23px;
-        font-size: 16px;
-      }
-
-      .focus-feature {
-        border-left: 1px solid var(--app-border);
-        padding: 12px 0 12px 28px;
-      }
-
-      .focus-feature h2 {
-        margin: 8px 0;
-        font-size: 31px;
-      }
-
-      .focus-feature .focus-preview {
-        margin: 0 0 20px;
-        font-size: 14px;
-        line-height: 1.65;
-      }
-
-      .all-outings {
-        margin: 36px 0 0;
-        border-top: 1px solid var(--app-border);
-        padding-top: 15px;
-      }
-
-      .all-outings summary,
-      .earlier-messages summary {
-        color: var(--app-muted-foreground);
-        cursor: pointer;
-        font-size: 13px;
-      }
-
-      .all-outings .outing-list {
-        margin-top: 14px;
-      }
-
-      .messenger-home {
-        width: min(620px, 100%);
-        margin: 34px auto 0;
-      }
-
-      .messenger-home-head {
-        display: flex;
-        align-items: end;
-        justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 20px;
-      }
-
-      .messenger-home h1 {
-        margin: 0;
-        font-size: 37px;
-      }
-
-      .inbox-list {
-        border-top: 1px solid var(--app-border);
-      }
-
-      .inbox-row {
-        display: flex;
-        width: 100%;
-        align-items: center;
-        gap: 13px;
-        border: 0;
+        gap: 8px;
         border-bottom: 1px solid var(--app-border);
-        background: transparent;
-        color: inherit;
-        padding: 14px 4px;
-        text-align: left;
+        padding: 9px 0 12px;
       }
 
-      .inbox-row:hover {
-        background: rgba(255, 255, 255, 0.035);
+      .chat-header .text-button {
+        justify-self: start;
+        white-space: nowrap;
       }
 
-      .inbox-avatar {
-        display: grid;
-        width: 42px;
-        height: 42px;
-        flex: 0 0 42px;
-        place-items: center;
-        border-radius: 50%;
-        background: var(--app-muted);
-        color: var(--app-primary);
-        font-family: "Newsreader Variable", Newsreader, Georgia, serif;
-        font-size: 20px;
-      }
-
-      .inbox-copy {
-        min-width: 0;
-        flex: 1;
-      }
-
-      .inbox-title {
-        display: block;
-        margin-bottom: 3px;
-        font-size: 15px;
-        font-weight: 600;
-      }
-
-      .inbox-preview {
-        display: block;
+      .chat-title {
+        max-width: min(45vw, 310px);
         overflow: hidden;
-        color: var(--app-muted-foreground);
-        font-size: 13px;
+        margin: 0;
+        font-size: 17px;
+        font-weight: 650;
+        letter-spacing: -0.02em;
+        text-align: center;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
-      .inbox-date {
-        flex: 0 0 auto;
-        color: var(--app-muted-foreground);
-        font-size: 11px;
-      }
-
-      .chat-page {
-        padding-top: 25px;
-      }
-
-      .chat-nav {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        margin-bottom: 18px;
-      }
-
-      .chat-nav-actions {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-      }
-
-      .outing-heading {
-        margin-bottom: 24px;
-      }
-
-      .outing-heading h1 {
-        margin: 3px 0 6px;
-        font-size: clamp(32px, 4vw, 42px);
-      }
-
-      .outing-heading p {
-        margin: 0;
-        color: var(--app-muted-foreground);
-        font-size: 13px;
+      .chat-header .secondary-button {
+        justify-self: end;
+        min-height: 34px;
+        padding: 5px 12px;
       }
 
       .conversation {
-        width: min(720px, 100%);
+        width: 100%;
         margin: 0 auto;
       }
 
       .message-list {
         display: flex;
         flex-direction: column;
-        gap: 15px;
+        gap: 12px;
+        margin: 15px 0 12px;
+        padding: 0;
+        list-style: none;
       }
 
       .message {
         display: flex;
+        min-width: 0;
         flex-direction: column;
-        max-width: 78%;
         gap: 5px;
       }
 
       .message.you {
-        align-self: flex-end;
         align-items: flex-end;
       }
 
       .message.agent {
-        align-self: flex-start;
         align-items: flex-start;
       }
 
-      .message-label {
-        color: var(--app-muted-foreground);
-        font-size: 11px;
-      }
-
       .message-bubble {
-        border-radius: 17px 17px 17px 5px;
+        max-width: min(88%, 520px);
+        border-radius: 18px;
         background: var(--app-muted);
-        padding: 12px 15px;
-        font-size: 15px;
-        white-space: pre-wrap;
+        color: var(--app-foreground);
+        padding: 9px 13px;
+        font-size: 14px;
         overflow-wrap: anywhere;
+        white-space: pre-wrap;
       }
 
       .message.you .message-bubble {
-        border-radius: 17px 17px 5px 17px;
-        background: var(--app-primary);
-        color: var(--app-primary-foreground);
-      }
-
-      .message-list.compact {
-        gap: 11px;
-      }
-
-      .message-list.compact .message {
-        max-width: 88%;
-      }
-
-      .message-list.compact .message-bubble {
-        padding: 10px 13px;
-        font-size: 14px;
+        border-radius: 18px 18px 5px 18px;
+        background: #0a84ff;
+        color: #fff;
       }
 
       .plan-card {
-        margin: 22px 0;
+        width: min(470px, 88%);
+        margin-top: 2px;
         border: 1px solid var(--app-border);
-        border-radius: var(--app-radius);
+        border-radius: 14px;
         background: var(--app-card);
-        padding: clamp(16px, 3vw, 23px);
-      }
-
-      .plan-card h2 {
-        margin: 8px 0 17px;
-        font-size: clamp(24px, 3.5vw, 31px);
-      }
-
-      .plan-kicker,
-      .plan-status,
-      .plan-line {
-        margin: 0;
-        font-size: 13px;
-      }
-
-      .plan-kicker {
-        color: var(--app-primary);
-        font-weight: 600;
-      }
-
-      .plan-status {
-        margin-top: 8px;
-        color: var(--app-muted-foreground);
-      }
-
-      .plan-facts {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px 18px;
-        margin-bottom: 14px;
-        color: var(--app-foreground);
-        font-size: 14px;
-        font-weight: 600;
-      }
-
-      .plan-line {
-        margin-top: 8px;
-        color: var(--app-muted-foreground);
-        line-height: 1.6;
-      }
-
-      .approval-list {
-        display: grid;
-        gap: 8px;
-        margin: 17px 0 18px;
-        border-top: 1px solid var(--app-border);
-        padding-top: 13px;
-      }
-
-      .approval-row {
-        display: flex;
-        justify-content: space-between;
-        gap: 16px;
-        font-size: 13px;
-      }
-
-      .approval-row span:last-child {
-        color: var(--app-muted-foreground);
-        text-align: right;
-      }
-
-      .plan-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 9px;
-      }
-
-      .revision-form {
-        display: grid;
-        gap: 10px;
-        margin-top: 16px;
-        border-top: 1px solid var(--app-border);
-        padding-top: 15px;
-      }
-
-      .revision-form label,
-      .dialog-form label {
-        display: grid;
-        gap: 6px;
-        color: var(--app-foreground);
-        font-size: 13px;
-        font-weight: 600;
-      }
-
-      .revision-form p {
-        margin: 0;
-        color: var(--app-muted-foreground);
-        font-size: 12px;
-      }
-
-      .field {
-        width: 100%;
-        min-height: 45px;
-        border: 1px solid var(--app-border);
-        border-radius: 12px;
-        background: var(--app-background);
         color: var(--app-foreground);
         padding: 10px 12px;
+        box-shadow: 0 1px 3px rgba(20, 24, 32, 0.06);
       }
 
-      textarea.field {
-        min-height: 78px;
-        resize: vertical;
-      }
-
-      .admission-card {
-        margin: 18px 0;
-        border-left: 3px solid var(--app-primary);
-        background: var(--app-muted);
-        padding: 14px 16px;
-      }
-
-      .admission-card p {
-        margin: 0 0 12px;
-        font-size: 14px;
-        line-height: 1.55;
-      }
-
-      .admission-card .admission-actions {
-        display: flex;
-        flex-wrap: wrap;
+      .plan-detail {
+        display: grid;
+        grid-template-columns: 76px minmax(0, 1fr);
         gap: 8px;
+        padding: 4px 0;
+        font-size: 13px;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
       }
 
-      .chat-shortcuts {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 5px;
-        margin: 20px 0 10px;
+      .plan-detail + .plan-detail {
+        border-top: 1px solid var(--app-border);
       }
 
-      .chat-hint {
-        margin: 7px 0 0;
+      .plan-label {
         color: var(--app-muted-foreground);
-        font-size: 11px;
+      }
+
+      .plan-value {
+        font-weight: 550;
       }
 
       .message-form {
+        position: sticky;
+        bottom: 70px;
         display: flex;
         align-items: flex-end;
-        gap: 9px;
+        gap: 8px;
+        margin: 9px 0 0;
         border: 1px solid var(--app-border);
-        border-radius: 18px;
+        border-radius: 22px;
         background: var(--app-card);
-        padding: 8px;
+        padding: 5px 6px 5px 13px;
+        box-shadow: 0 2px 10px rgba(20, 24, 32, 0.08);
       }
 
       .message-form textarea {
-        min-height: 42px;
-        max-height: 130px;
+        min-width: 0;
+        min-height: 38px;
+        max-height: 116px;
         flex: 1;
+        align-self: center;
+        resize: none;
         border: 0;
         outline: 0;
         background: transparent;
         color: var(--app-foreground);
-        padding: 9px 8px;
-        resize: vertical;
+        padding: 9px 0;
+        line-height: 1.35;
       }
 
       .message-form textarea::placeholder {
         color: var(--app-muted-foreground);
-        opacity: 0.85;
+        opacity: 0.9;
       }
 
-      .message-form button {
+      .message-form .primary-button {
+        min-height: 35px;
         flex: 0 0 auto;
+        padding: 6px 13px;
       }
 
-      .focus-chat {
-        width: min(800px, 100%);
-        margin: 0 auto;
+      .variant-b .message-list {
+        gap: 9px;
+        margin-top: 11px;
       }
 
-      .focus-response {
-        min-height: 170px;
-        border-top: 1px solid var(--app-border);
-        padding: 27px 0 22px;
+      .variant-b .message-bubble {
+        padding: 8px 11px;
+        font-size: 13px;
       }
 
-      .focus-response-label {
-        margin-bottom: 11px;
-        color: var(--app-muted-foreground);
-        font-size: 12px;
+      .variant-b .plan-card {
+        width: min(430px, 88%);
+        padding: 8px 10px;
       }
 
-      .focus-copy {
-        max-width: 740px;
-        margin: 0;
-        font-size: clamp(27px, 4vw, 39px);
-        line-height: 1.18;
-        white-space: pre-wrap;
+      .variant-c .message-bubble {
+        border-radius: 15px;
       }
 
-      .focus-context {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        margin: 7px 0 19px;
+      .variant-c .message.you .message-bubble {
+        border-radius: 15px 15px 4px 15px;
+        background: #168af2;
       }
 
-      .focus-context p {
-        margin: 0;
-        color: var(--app-muted-foreground);
-        font-size: 12px;
-      }
-
-      .earlier-messages {
-        margin: 0 0 18px;
-        border-bottom: 1px solid var(--app-border);
-        padding-bottom: 14px;
-      }
-
-      .earlier-messages .message-list {
-        margin-top: 15px;
-      }
-
-      .focus-chat .plan-card {
-        margin-top: 0;
-      }
-
-      .messenger-chat {
-        width: min(560px, 100%);
-        margin: 0 auto;
-        border-radius: 19px;
-        background: var(--app-muted);
-        padding: 17px clamp(13px, 3vw, 20px) 16px;
-      }
-
-      .messenger-chat .outing-heading {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 17px;
-      }
-
-      .messenger-chat .outing-heading h1 {
-        margin: 0;
-        font-size: 27px;
-      }
-
-      .messenger-chat .outing-heading p {
-        margin-top: 3px;
-      }
-
-      .messenger-chat .message {
-        max-width: 86%;
-      }
-
-      .messenger-chat .message-bubble {
-        background: var(--app-card);
-        padding: 10px 12px;
-        font-size: 14px;
-      }
-
-      .messenger-chat .message.you .message-bubble {
-        background: var(--app-primary);
-        color: var(--app-primary-foreground);
-      }
-
-      .messenger-chat .plan-card {
-        margin: 16px 0;
-        background: var(--app-background);
-      }
-
-      .messenger-chat .chat-shortcuts {
-        margin-top: 15px;
-      }
-
-      .messenger-chat .quiet-button {
-        padding-inline: 9px;
-        font-size: 12px;
+      .variant-c .message.agent .message-bubble {
+        background: color-mix(in srgb, var(--app-muted) 76%, #dceaff);
       }
 
       .review-tools {
-        width: min(920px, calc(100% - 36px));
-        margin: 0 auto;
-        padding: 0 0 88px;
-        color: var(--muted-foreground, #93a89a);
+        width: min(680px, 100%);
+        margin: 20px auto 90px;
+        padding: 0 14px;
+        color: var(--app-muted-foreground, #6c7079);
         font-size: 12px;
       }
 
       .review-details {
-        margin-top: 12px;
-        border-top: 1px solid var(--app-border, #b7c7b9);
-        padding-top: 11px;
+        margin-top: 10px;
+        border-top: 1px solid var(--app-border, rgba(30, 34, 42, 0.14));
+        padding-top: 9px;
       }
 
       .review-details summary {
         width: fit-content;
         cursor: pointer;
-        color: var(--muted-foreground, #93a89a);
         font-size: 12px;
       }
 
       .demo-copy {
-        margin: 10px 0;
-        font-size: 12px;
+        margin: 9px 0;
+        line-height: 1.5;
       }
 
       .demo-select-wrap {
         display: inline-grid;
-        gap: 5px;
-        margin: 0 12px 10px 0;
+        gap: 4px;
+        margin: 0 12px 9px 0;
         vertical-align: bottom;
       }
 
       .demo-select-wrap select {
-        min-height: 35px;
-        border: 1px solid var(--app-border, #b7c7b9);
-        border-radius: 9px;
-        background: var(--app-background, #10201b);
-        color: var(--app-foreground, #e8eee3);
-        padding: 5px 9px;
+        min-height: 33px;
+        max-width: 100%;
+        border: 1px solid var(--app-border);
+        border-radius: 8px;
+        background: var(--app-card);
+        color: var(--app-foreground);
+        padding: 4px 8px;
       }
 
       .demo-buttons {
         display: flex;
         flex-wrap: wrap;
-        gap: 7px;
-        margin: 0 0 8px;
+        gap: 6px;
+        margin: 0 0 7px;
       }
 
       .demo-buttons .secondary-button {
-        min-height: 35px;
-        padding: 6px 11px;
-        color: var(--app-foreground, #e8eee3);
+        min-height: 33px;
+        padding: 5px 9px;
         font-size: 12px;
       }
 
       .state-dump {
         max-height: 430px;
         overflow: auto;
-        margin: 12px 0 0;
-        border-radius: 10px;
-        background: var(--app-background, #10201b);
-        color: var(--app-foreground, #e8eee3);
-        padding: 13px;
-        font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+        margin: 10px 0 0;
+        border-radius: 8px;
+        background: var(--app-muted);
+        color: var(--app-foreground);
+        padding: 12px;
+        font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
       }
@@ -849,43 +433,43 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
       .variant-switcher {
         position: fixed;
         z-index: 20;
-        bottom: max(12px, env(safe-area-inset-bottom));
+        bottom: max(10px, env(safe-area-inset-bottom));
         left: 50%;
         display: flex;
         width: max-content;
         max-width: calc(100% - 20px);
         align-items: center;
-        gap: 5px;
+        gap: 4px;
         transform: translateX(-50%);
-        border: 1px solid rgba(16, 32, 27, 0.18);
+        border: 1px solid rgba(0, 0, 0, 0.12);
         border-radius: 999px;
-        background: #f2c766;
-        box-shadow: 0 5px 20px rgba(0, 0, 0, 0.28);
-        color: #10201b;
-        padding: 5px;
+        background: #fff;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.2);
+        color: #202124;
+        padding: 4px;
       }
 
       .variant-switcher button {
         display: grid;
-        width: 36px;
-        height: 36px;
-        flex: 0 0 36px;
+        width: 34px;
+        height: 34px;
+        flex: 0 0 34px;
         place-items: center;
         border: 0;
         border-radius: 50%;
         background: transparent;
         color: inherit;
-        font-size: 19px;
+        font-size: 20px;
       }
 
       .variant-switcher button:hover {
-        background: rgba(16, 32, 27, 0.12);
+        background: rgba(0, 0, 0, 0.08);
       }
 
       .variant-name {
         overflow: hidden;
-        padding: 0 8px;
-        font-size: 12px;
+        padding: 0 7px;
+        font-size: 11px;
         font-weight: 700;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -902,163 +486,114 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
       }
 
       dialog {
-        width: min(440px, calc(100% - 28px));
-        border: 1px solid var(--border, rgba(232, 238, 227, 0.19));
-        border-radius: var(--radius, 16px);
-        background: var(--card, #172b24);
-        color: var(--foreground, #e8eee3);
-        padding: 22px;
+        width: min(420px, calc(100% - 26px));
+        border: 1px solid var(--app-border, rgba(30, 34, 42, 0.14));
+        border-radius: 18px;
+        background: var(--app-card, #fff);
+        color: var(--app-foreground, #202124);
+        padding: 18px;
       }
 
       dialog::backdrop {
-        background: rgba(0, 0, 0, 0.66);
+        background: rgba(0, 0, 0, 0.36);
       }
 
       dialog h2 {
-        margin-bottom: 8px;
+        margin: 0 0 7px;
+        font-size: 19px;
       }
 
       dialog p {
-        color: var(--muted-foreground, #93a89a);
+        margin: 0 0 13px;
+        color: var(--app-muted-foreground, #6c7079);
         font-size: 13px;
-        line-height: 1.55;
+        line-height: 1.5;
       }
 
       .dialog-form {
         display: grid;
-        gap: 14px;
+        gap: 12px;
+      }
+
+      .dialog-form label {
+        display: grid;
+        gap: 5px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .field {
+        width: 100%;
+        min-height: 41px;
+        border: 1px solid var(--app-border);
+        border-radius: 10px;
+        background: transparent;
+        color: var(--app-foreground);
+        padding: 8px 10px;
       }
 
       .dialog-actions {
         display: flex;
         flex-wrap: wrap;
-        gap: 9px;
+        gap: 8px;
       }
 
       .invite-result {
-        min-height: 20px;
+        min-height: 18px;
         margin: 0;
-        color: var(--primary, #f2c766);
+        color: #0a84ff;
         font-weight: 600;
       }
 
-      @media (max-width: 680px) {
-        .brand-side {
-          gap: 10px;
-        }
-
-        .sample-label {
-          max-width: 114px;
-          text-align: right;
-        }
-
-        .account-name {
-          display: none;
-        }
-
-        .app-main,
-        .review-tools {
-          width: calc(100% - 28px);
+      @media (max-width: 520px) {
+        .app-main {
+          padding-right: 10px;
+          padding-left: 10px;
         }
 
         .home-head {
-          align-items: flex-start;
-          flex-direction: column;
-          margin-top: 31px;
+          padding-top: 14px;
         }
 
-        .home-head .primary-button {
-          width: 100%;
-        }
-
-        .outing-row {
-          gap: 4px 9px;
-          padding: 16px 3px;
-        }
-
-        .outing-row-title {
-          font-size: 21px;
-        }
-
-        .outing-row-date {
-          font-size: 11px;
-        }
-
-        .focus-home {
-          grid-template-columns: 1fr;
-          gap: 31px;
-          margin-top: 37px;
-        }
-
-        .focus-home h1 {
-          font-size: 45px;
-        }
-
-        .focus-feature {
-          border-left: 0;
-          border-top: 1px solid var(--app-border);
-          padding: 20px 0 0;
-        }
-
-        .messenger-home {
-          margin-top: 27px;
-        }
-
-        .messenger-home h1 {
-          font-size: 33px;
-        }
-
-        .chat-page {
-          padding-top: 16px;
-        }
-
-        .chat-nav {
-          align-items: flex-start;
-        }
-
-        .chat-nav-actions {
-          gap: 7px;
-        }
-
-        .chat-nav-actions .secondary-button {
-          min-height: 36px;
-          padding: 6px 11px;
-        }
-
-        .outing-heading {
-          margin-bottom: 18px;
-        }
-
-        .message {
-          max-width: 88%;
-        }
-
-        .plan-facts {
-          display: grid;
+        .chat-header {
+          grid-template-columns: minmax(58px, 1fr) auto minmax(58px, 1fr);
           gap: 4px;
+          padding-top: 7px;
         }
 
-        .approval-row {
+        .chat-header .text-button {
+          font-size: 13px;
+        }
+
+        .chat-header .secondary-button {
+          min-height: 32px;
+          padding: 4px 10px;
+          font-size: 13px;
+        }
+
+        .chat-title {
+          max-width: 42vw;
+          font-size: 16px;
+        }
+
+        .message-bubble {
+          max-width: 91%;
+          font-size: 14px;
+        }
+
+        .plan-card {
+          width: min(100%, 390px);
+          padding: 9px 10px;
+        }
+
+        .plan-detail {
+          grid-template-columns: 68px minmax(0, 1fr);
+          gap: 6px;
           font-size: 12px;
         }
 
-        .focus-response {
-          min-height: 0;
-          padding: 21px 0 16px;
-        }
-
-        .focus-copy {
-          font-size: 29px;
-        }
-
-        .messenger-chat {
-          border-radius: 14px;
-          padding: 14px 11px;
-        }
-
-        .messenger-chat .outing-heading .chat-nav-actions {
-          flex-direction: column;
-          align-items: flex-end;
+        .variant-b .plan-card {
+          width: min(100%, 390px);
         }
       }
 
@@ -1078,13 +613,13 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
     <section class="review-tools" aria-label="Prototype review controls">
       <details class="review-details" id="demo-disclosure">
         <summary>Demo controls</summary>
-        <p class="demo-copy">These controls change sample data. No background agents run.</p>
+        <p class="demo-copy">Canned sample only. No AI, email, server, storage, or live venue data is connected.</p>
         <label class="demo-select-wrap" for="demo-outing-select">
           <span>Scenario outing</span>
           <select id="demo-outing-select" aria-label="Choose an outing for demo controls"></select>
         </label>
         <div class="demo-buttons">
-          <button class="secondary-button" type="button" data-action="demo-advance">Advance negotiation</button>
+          <button class="secondary-button" type="button" data-action="demo-advance">Advance sample negotiation</button>
           <button class="secondary-button" type="button" data-action="demo-sam" disabled>Simulate Sam's approval</button>
           <button class="secondary-button" type="button" data-action="demo-alex" disabled>Simulate Alex's approval</button>
           <button class="secondary-button" type="button" data-action="demo-admission">Simulate shared-link request</button>
@@ -1109,7 +644,7 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
         <div>
           <h2 id="invite-title">Invite by email</h2>
           <p id="invite-outing-label"></p>
-          <p>An invitation grants admission when the recipient signs in with this verified email address. It does not confirm attendance.</p>
+          <p>This sample invitation is not sent. In the app, an invite grants admission when the recipient signs in with this verified email address. It does not confirm attendance.</p>
         </div>
         <label for="invite-email">
           Email address
@@ -1129,15 +664,15 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
 
         var variantNames = {
           A: "Conversation",
-          B: "Focus",
-          C: "Messenger"
+          B: "Compact",
+          C: "Bubbles"
         };
         var validVariants = ["A", "B", "C"];
         var initialUrl = new URL(window.location.href);
         var requestedVariant = initialUrl.searchParams.get("variant");
         var currentVariant = validVariants.indexOf(requestedVariant) >= 0 ? requestedVariant : "A";
         var state = {
-          view: "home",
+          view: "chat",
           activeId: "dinner",
           demoId: "dinner",
           inviteFor: null,
@@ -1145,41 +680,52 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
             {
               id: "dinner",
               title: "Dinner Friday",
-              dateLabel: "Friday, October 30, 2026",
-              idea: "Dinner after work",
+              dateLabel: "Friday",
+              idea: "Dinner Friday, under $30, if Sam comes",
               isNew: false,
-              awaitingCondition: false,
+              responseCutoff: null,
               interest: "unset",
-              conditions: [],
+              conditions: ["under $30", "if Sam comes"],
+              participants: ["Maya Chen", "Sam Rivera", "Alex Kim"],
               invitedEmails: [],
               admittedParticipants: [],
               admissionRequest: null,
-              plan: null,
+              previousPlan: null,
+              plan: {
+                activity: "Dinner at Saffron Table",
+                location: "Phoenix",
+                date: "Friday, November 6, 2026",
+                dateISO: "2026-11-06",
+                time: "6:30 PM",
+                time24: "18:30",
+                timezone: "MST (Phoenix)",
+                cost: "$28 estimated per person",
+                attendees: ["Maya Chen", "Sam Rivera", "Alex Kim"],
+                startAt: "2026-11-06T18:30:00-07:00",
+                approvals: { maya: false, sam: false, alex: false }
+              },
               messages: [
-                {
-                  speaker: "agent",
-                  text: "Friday dinner is an open idea. Tell me what would make the evening work for you."
-                }
+                { speaker: "you", text: "Dinner Friday, under $30, if Sam comes" },
+                { speaker: "agent", text: "I found a dinner option under $30 that includes Sam. Does that work for you?" }
               ]
             },
             {
               id: "walk",
               title: "Saturday walk",
-              dateLabel: "Saturday, October 31, 2026",
+              dateLabel: "Saturday",
               idea: "A Saturday walk",
               isNew: false,
-              awaitingCondition: false,
+              responseCutoff: null,
               interest: "unset",
               conditions: [],
+              participants: ["Maya Chen"],
               invitedEmails: [],
               admittedParticipants: [],
               admissionRequest: null,
+              previousPlan: null,
               plan: null,
               messages: [
-                {
-                  speaker: "agent",
-                  text: "Your walk idea has its own private chat. I have not carried over anything from another outing."
-                }
+                { speaker: "agent", text: "We can plan a Saturday walk here. I haven't carried details over from another outing. What time works?" }
               ]
             }
           ]
@@ -1220,15 +766,6 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
           return outing.messages[outing.messages.length - 1] || { speaker: "agent", text: "Start with an idea." };
         }
 
-        function latestAgentMessage(outing) {
-          for (var index = outing.messages.length - 1; index >= 0; index -= 1) {
-            if (outing.messages[index].speaker === "agent") {
-              return outing.messages[index];
-            }
-          }
-          return { speaker: "agent", text: "Your personal agent is here when you are ready." };
-        }
-
         function updateUrl() {
           var url = new URL(window.location.href);
           url.searchParams.set("variant", currentVariant);
@@ -1262,329 +799,133 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
           announce("Variant " + currentVariant + ", " + variantNames[currentVariant]);
         }
 
-        function renderBrandBar() {
-          return [
-            '<header class="brand-bar">',
-              '<button class="wordmark" type="button" data-action="home" aria-label="Go to all outings">I&#39;m in if<span>…</span></button>',
-              '<div class="brand-side">',
-                '<span class="sample-label">Prototype • sample data</span>',
-                '<div class="account" aria-label="Sample account, Maya Chen">',
-                  '<span class="avatar" aria-hidden="true">MC</span>',
-                  '<span class="account-name">Maya Chen</span>',
-                '</div>',
-              '</div>',
-            '</header>'
-          ].join("");
-        }
-
-        function outingRow(outing) {
+        function renderOutingRow(outing) {
           return [
             '<button class="outing-row" type="button" data-action="open-outing" data-id="', escapeHtml(outing.id), '" aria-label="Open ', escapeHtml(outing.title), '">',
               '<span class="outing-row-title">', escapeHtml(outing.title), '</span>',
               '<span class="outing-row-preview">', escapeHtml(lastMessage(outing).text), '</span>',
-              '<span class="outing-row-date">', escapeHtml(outing.dateLabel), '</span>',
+              '<span class="outing-row-date">', escapeHtml(outing.dateLabel || ""), '</span>',
             '</button>'
-          ].join("");
-        }
-
-        function inboxRow(outing) {
-          var initial = outing.title.charAt(0).toUpperCase();
-          return [
-            '<button class="inbox-row" type="button" data-action="open-outing" data-id="', escapeHtml(outing.id), '" aria-label="Open ', escapeHtml(outing.title), '">',
-              '<span class="inbox-avatar" aria-hidden="true">', escapeHtml(initial), '</span>',
-              '<span class="inbox-copy">',
-                '<span class="inbox-title">', escapeHtml(outing.title), '</span>',
-                '<span class="inbox-preview">', escapeHtml(lastMessage(outing).text), '</span>',
-              '</span>',
-              '<span class="inbox-date">', escapeHtml(outing.dateLabel.split(",")[0]), '</span>',
-            '</button>'
-          ].join("");
-        }
-
-        function renderHomeA() {
-          return [
-            '<section class="home home-a" aria-labelledby="home-title">',
-              '<div class="home-head">',
-                '<div><h1 id="home-title">Your outings</h1><p>Each outing has its own private chat.</p></div>',
-                '<button class="primary-button" type="button" data-action="new-outing">New outing</button>',
-              '</div>',
-              '<div class="outing-list" aria-label="Outings">', state.outings.map(outingRow).join(""), '</div>',
-            '</section>'
-          ].join("");
-        }
-
-        function renderHomeB() {
-          var focusOuting = state.outings.find(function (outing) {
-            return outing.id === state.activeId;
-          }) || state.outings[0];
-          var otherOutings = state.outings.filter(function (outing) {
-            return outing.id !== focusOuting.id;
-          });
-          return [
-            '<section class="focus-home" aria-labelledby="focus-home-title">',
-              '<div>',
-                '<h1 id="focus-home-title">Make a plan in the chat you already have.</h1>',
-                '<p class="focus-lede">Ideas, preferences, and decisions can stay in one private conversation for each outing.</p>',
-                '<button class="primary-button" type="button" data-action="new-outing">Start an outing</button>',
-              '</div>',
-              '<div class="focus-feature">',
-                '<p class="muted">Continue your latest outing</p>',
-                '<h2>', escapeHtml(focusOuting.title), '</h2>',
-                '<p class="focus-preview">', escapeHtml(latestAgentMessage(focusOuting).text), '</p>',
-                '<button class="secondary-button" type="button" data-action="open-outing" data-id="', escapeHtml(focusOuting.id), '">Open conversation</button>',
-              '</div>',
-            '</section>',
-            '<details class="all-outings">',
-              '<summary>All outings (', state.outings.length, ')</summary>',
-              '<div class="outing-list">', otherOutings.map(outingRow).join(""), '</div>',
-            '</details>'
-          ].join("");
-        }
-
-        function renderHomeC() {
-          return [
-            '<section class="messenger-home" aria-labelledby="inbox-title">',
-              '<div class="messenger-home-head">',
-                '<div><h1 id="inbox-title">Your chats</h1><p>One outing per conversation.</p></div>',
-                '<button class="primary-button" type="button" data-action="new-outing">New chat</button>',
-              '</div>',
-              '<div class="inbox-list" aria-label="Outing conversations">', state.outings.map(inboxRow).join(""), '</div>',
-            '</section>'
           ].join("");
         }
 
         function renderHome() {
-          if (currentVariant === "B") {
-            return renderHomeB();
-          }
-          if (currentVariant === "C") {
-            return renderHomeC();
-          }
-          return renderHomeA();
+          return [
+            '<section aria-labelledby="home-title">',
+              '<div class="home-head">',
+                '<h1 id="home-title">Outings</h1>',
+                '<button class="primary-button" type="button" data-action="new-outing">New outing</button>',
+              '</div>',
+              '<div class="outing-list" aria-label="Outings">', state.outings.map(renderOutingRow).join(""), '</div>',
+            '</section>'
+          ].join("");
         }
 
-        function renderMessage(message) {
-          var speakerLabel = message.speaker === "you" ? "You" : "Your agent";
-          var speakerClass = message.speaker === "you" ? "you" : "agent";
+        function planCard(plan) {
+          if (!plan) {
+            return "";
+          }
           return [
-            '<li class="message ', speakerClass, '">',
-              '<span class="message-label">', speakerLabel, '</span>',
+            '<section class="plan-card" aria-label="Proposed plan">',
+              '<div class="plan-detail"><span class="plan-label">Activity</span><span class="plan-value">', escapeHtml(plan.activity + ", " + plan.location), '</span></div>',
+              '<div class="plan-detail"><span class="plan-label">When</span><span class="plan-value">', escapeHtml(plan.date + " · " + plan.time + " " + plan.timezone), '</span></div>',
+              '<div class="plan-detail"><span class="plan-label">Cost</span><span class="plan-value">', escapeHtml(plan.cost), '</span></div>',
+              '<div class="plan-detail"><span class="plan-label">Attendees</span><span class="plan-value">', escapeHtml(plan.attendees.join(", ")), '</span></div>',
+            '</section>'
+          ].join("");
+        }
+
+        function renderMessage(message, plan) {
+          var speakerClass = message.speaker === "you" ? "you" : "agent";
+          var speakerLabel = message.speaker === "you" ? "You" : "Your agent";
+          return [
+            '<li class="message ', speakerClass, '" aria-label="Message from ', speakerLabel, '">',
               '<div class="message-bubble">', escapeHtml(message.text), '</div>',
+              message.speaker === "agent" && plan ? planCard(plan) : "",
             '</li>'
           ].join("");
         }
 
-        function approvalRows(outing) {
-          var approvals = outing.plan.approvals;
-          var expired = planExpired(outing);
-          var people = [
-            { key: "maya", name: "Maya Chen", label: "You" },
-            { key: "sam", name: "Sam Rivera", label: "Sam" },
-            { key: "alex", name: "Alex Kim", label: "Alex" }
-          ];
-          return people.map(function (person) {
-            var status = approvals[person.key]
-              ? "Approved version " + outing.plan.revision
-              : expired
-                ? "Not approved by the start time"
-                : (person.key === "maya" ? "Waiting for your approval" : "Waiting for approval");
-            return [
-              '<div class="approval-row"><span>', person.name, person.key === "maya" ? " (you)" : "", '</span>',
-              '<span>', escapeHtml(status), '</span></div>'
-            ].join("");
+        function renderChat(outing) {
+          var latestAgentIndex = -1;
+          outing.messages.forEach(function (message, index) {
+            if (message.speaker === "agent") {
+              latestAgentIndex = index;
+            }
+          });
+          var messageMarkup = outing.messages.map(function (message, index) {
+            return renderMessage(message, index === latestAgentIndex ? outing.plan : null);
           }).join("");
-        }
-
-        function everyoneApproved(outing) {
-          var approvals = outing.plan.approvals;
-          return approvals.maya && approvals.sam && approvals.alex;
-        }
-
-        function planExpired(outing) {
-          return Boolean(outing.plan && Date.now() >= Date.parse(outing.plan.deadlineAt));
-        }
-
-        function renderRevisionForm(outing) {
-          if (!outing.editingRevision) {
-            return "";
-          }
           return [
-            '<form class="revision-form" id="revision-form">',
-              '<label for="revision-field">What should change?</label>',
-              '<textarea class="field" id="revision-field" name="change" placeholder="For example, move dinner to Friday, November 13 at 6:30 pm" required></textarea>',
-              '<p>The revised plan will be for Friday, November 13, 2026 at 6:30 pm. Everyone must approve it again.</p>',
-              '<div class="plan-actions">',
-                '<button class="primary-button" type="submit">Request this change</button>',
-                '<button class="secondary-button" type="button" data-action="cancel-revision">Keep this version</button>',
-              '</div>',
-            '</form>'
-          ].join("");
-        }
-
-        function renderPlan(outing) {
-          if (!outing.plan) {
-            return "";
-          }
-          var plan = outing.plan;
-          var expired = planExpired(outing);
-          var approved = everyoneApproved(outing);
-          var ownApproval = plan.approvals.maya;
-          var summary = expired && !approved
-            ? "Approval closed at the plan start time. This plan is not confirmed."
-            : approved
-            ? "Everyone approved version " + plan.revision + ". This plan is confirmed."
-            : ownApproval
-              ? "You approved version " + plan.revision + ". The other attendees still need to approve."
-              : "This plan is waiting for your approval and each attendee's approval.";
-          return [
-            '<section class="plan-card" aria-label="Current tentative plan, version ', plan.revision, '">',
-              '<p class="plan-kicker">Tentative plan, version ', plan.revision, '</p>',
-              '<p class="plan-status" role="status" aria-live="polite">', escapeHtml(summary), '</p>',
-              '<h2>', escapeHtml(plan.activity), '</h2>',
-              '<div class="plan-facts">',
-                '<span>', escapeHtml(plan.date), '</span>',
-                '<span>', escapeHtml(plan.time), ' (Phoenix time)</span>',
-                '<span>', escapeHtml(plan.cost), ' estimated per person</span>',
-              '</div>',
-              '<p class="plan-line"><strong>Attendees:</strong> ', escapeHtml(plan.attendees.join(", ")), '</p>',
-              '<p class="plan-line">Unverified sample suggestion. No booking has been made.</p>',
-              '<p class="plan-line"><strong>Approval closes:</strong> ', escapeHtml(plan.date), ' at ', escapeHtml(plan.time), ' Phoenix time, the plan start time.</p>',
-              plan.changeNote ? '<p class="plan-line"><strong>Your change request:</strong> ' + escapeHtml(plan.changeNote) + '</p>' : "",
-              '<div class="approval-list" aria-label="Approval status">', approvalRows(outing), '</div>',
-              '<div class="plan-actions">',
-                '<button class="primary-button" type="button" data-action="approve-plan" ', ownApproval || expired ? "disabled" : "", ' aria-label="Approve version ', plan.revision, ', ', escapeHtml(plan.activity), '">', ownApproval ? "You approved this version" : (expired ? "Approval closed" : "Approve version " + plan.revision), '</button>',
-                '<button class="secondary-button" type="button" data-action="request-revision">Request a change</button>',
-              '</div>',
-              renderRevisionForm(outing),
-            '</section>'
-          ].join("");
-        }
-
-        function renderAdmission(outing) {
-          if (!outing.admissionRequest || outing.admissionRequest.status !== "pending") {
-            return "";
-          }
-          return [
-            '<section class="admission-card" aria-label="Admission request">',
-              '<p><strong>', escapeHtml(outing.admissionRequest.name), ' asked to join through a shared link.</strong> Admitting them adds them to the planning group. It does not add them to the attendee list or confirm attendance.</p>',
-              '<div class="admission-actions">',
-                '<button class="primary-button" type="button" data-action="admit">Admit ', escapeHtml(outing.admissionRequest.name), '</button>',
-                '<button class="secondary-button" type="button" data-action="decline-admission">Decline request</button>',
-              '</div>',
-            '</section>'
-          ].join("");
-        }
-
-        function renderChatNav(outing) {
-          return [
-            '<div class="chat-nav">',
-              '<button class="text-button" type="button" data-action="home">All outings</button>',
-              '<div class="chat-nav-actions">',
+            '<section aria-label="Conversation with your personal agent">',
+              '<header class="chat-header">',
+                '<button class="text-button" type="button" data-action="home" aria-label="Back to outings">‹ Outings</button>',
+                '<h1 class="chat-title">', escapeHtml(outing.title), '</h1>',
                 '<button class="secondary-button" type="button" data-action="invite">Invite</button>',
+              '</header>',
+              '<div class="conversation">',
+                '<ol class="message-list" aria-label="Conversation messages">', messageMarkup, '</ol>',
+                '<form class="message-form" id="chat-form">',
+                  '<label class="sr-only" for="message-field">Message your personal agent</label>',
+                  '<textarea id="message-field" name="message" rows="1" placeholder="Message" autocomplete="off"></textarea>',
+                  '<button class="primary-button" type="submit">Send</button>',
+                '</form>',
               '</div>',
-            '</div>',
-            '<header class="outing-heading">',
-              '<h1>', escapeHtml(outing.title), '</h1>',
-              '<p>Private chat with your personal agent</p>',
-            '</header>'
+            '</section>'
           ].join("");
         }
 
-        function chatShortcuts() {
-          return [
-            '<div class="chat-shortcuts" aria-label="Optional chat actions">',
-              '<button class="quiet-button" type="button" data-action="interest" data-interest="yes">I&#39;m interested</button>',
-              '<button class="quiet-button" type="button" data-action="interest" data-interest="no">Not for me</button>',
-              '<button class="quiet-button" type="button" data-action="add-condition">Add a condition</button>',
+        function render() {
+          var outing = activeOuting();
+          prototypeRoot.innerHTML = [
+            '<div class="prototype-app variant-', currentVariant.toLowerCase(), '">',
+              '<main class="app-main">',
+                state.view === "home" ? renderHome() : renderChat(outing),
+              '</main>',
             '</div>'
           ].join("");
-        }
-
-        function renderComposer(outing) {
-          var placeholder = outing.awaitingCondition
-            ? "Write a condition for this outing"
-            : (outing.isNew && !outing.idea ? "Start with an idea. Add a time if you have one." : "Write a message to your agent");
-          return [
-            '<form class="message-form" id="chat-form">',
-              '<label class="sr-only" for="message-field">Message your personal agent</label>',
-              '<textarea id="message-field" name="message" rows="1" placeholder="', escapeHtml(placeholder), '"></textarea>',
-              '<button class="primary-button" type="submit">Send</button>',
-            '</form>',
-            '<p class="chat-hint">Only you and your agent can see this chat.</p>'
-          ].join("");
-        }
-
-        function renderChatA(outing) {
-          return [
-            '<section class="chat-page" aria-label="Conversation with your personal agent">',
-              renderChatNav(outing),
-              '<div class="conversation">',
-                '<ol class="message-list" aria-label="Conversation messages">', outing.messages.map(renderMessage).join(""), '</ol>',
-                renderAdmission(outing),
-                renderPlan(outing),
-                chatShortcuts(),
-                renderComposer(outing),
-              '</div>',
-            '</section>'
-          ].join("");
-        }
-
-        function renderChatB(outing) {
-          var current = latestAgentMessage(outing);
-          var history = outing.messages.filter(function (message) {
-            return message !== current;
-          });
-          return [
-            '<section class="chat-page focus-chat" aria-label="Focused conversation with your personal agent">',
-              renderChatNav(outing),
-              '<div class="focus-context"><p>One recommendation at a time. Your preferences stay private.</p></div>',
-              '<section class="focus-response" aria-label="Latest response from your agent">',
-                '<p class="focus-response-label">Your agent</p>',
-                '<p class="focus-copy">', escapeHtml(current.text), '</p>',
-              '</section>',
-              renderAdmission(outing),
-              renderPlan(outing),
-              history.length ? '<details class="earlier-messages"><summary>Earlier messages (' + history.length + ')</summary><ol class="message-list compact" aria-label="Earlier conversation messages">' + history.map(renderMessage).join("") + '</ol></details>' : "",
-              chatShortcuts(),
-              renderComposer(outing),
-            '</section>'
-          ].join("");
-        }
-
-        function renderChatC(outing) {
-          return [
-            '<section class="chat-page" aria-label="Messenger conversation">',
-              '<div class="messenger-chat">',
-                '<header class="outing-heading">',
-                  '<div><h1>', escapeHtml(outing.title), '</h1><p>Private chat with your agent</p></div>',
-                  '<div class="chat-nav-actions"><button class="quiet-button" type="button" data-action="home">Outings</button><button class="secondary-button" type="button" data-action="invite">Invite</button></div>',
-                '</header>',
-                '<ol class="message-list" aria-label="Conversation messages">', outing.messages.map(renderMessage).join(""), '</ol>',
-                renderAdmission(outing),
-                renderPlan(outing),
-                chatShortcuts(),
-                renderComposer(outing),
-              '</div>',
-            '</section>'
-          ].join("");
-        }
-
-        function renderChat() {
-          var outing = activeOuting();
-          if (currentVariant === "B") {
-            return renderChatB(outing);
-          }
-          if (currentVariant === "C") {
-            return renderChatC(outing);
-          }
-          return renderChatA(outing);
+          updateVariantLabel();
+          updateReviewControls();
+          updateInspector();
         }
 
         function updateInspector() {
           stateDump.textContent = JSON.stringify({
             variant: currentVariant,
-            ...state
+            state: state
           }, null, 2);
+        }
+
+        function nameKey(name) {
+          if (name === "Maya Chen") {
+            return "maya";
+          }
+          if (name === "Sam Rivera") {
+            return "sam";
+          }
+          if (name === "Alex Kim") {
+            return "alex";
+          }
+          return null;
+        }
+
+        function hasAttendee(outing, person) {
+          var fullName = person === "sam" ? "Sam Rivera" : "Alex Kim";
+          return Boolean(outing.plan && outing.plan.attendees.indexOf(fullName) >= 0);
+        }
+
+        function everyoneApproved(outing) {
+          if (!outing.plan) {
+            return false;
+          }
+          return outing.plan.attendees.every(function (name) {
+            var key = nameKey(name);
+            return Boolean(key && outing.plan.approvals[key]);
+          });
+        }
+
+        function planExpired(outing) {
+          return Boolean(outing.plan && Date.now() >= Date.parse(outing.plan.startAt));
         }
 
         function updateReviewControls() {
@@ -1596,51 +937,16 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
           select.value = selectedId;
           var target = demoOuting();
           document.querySelector('[data-action="demo-advance"]').disabled = Boolean(target.plan);
-          document.querySelector('[data-action="demo-sam"]').disabled = !target.plan || target.plan.approvals.sam || planExpired(target);
-          document.querySelector('[data-action="demo-alex"]').disabled = !target.plan || target.plan.approvals.alex || planExpired(target);
+          document.querySelector('[data-action="demo-sam"]').disabled = !hasAttendee(target, "sam") || target.plan.approvals.sam || planExpired(target);
+          document.querySelector('[data-action="demo-alex"]').disabled = !hasAttendee(target, "alex") || target.plan.approvals.alex || planExpired(target);
           document.querySelector('[data-action="demo-admission"]').disabled = Boolean(target.admissionRequest && target.admissionRequest.status === "pending");
         }
 
-        function render() {
-          prototypeRoot.innerHTML = [
-            '<div class="prototype-app">',
-              renderBrandBar(),
-              '<main class="app-main">',
-                state.view === "home" ? renderHome() : renderChat(),
-              '</main>',
-            '</div>'
-          ].join("");
-          updateVariantLabel();
-          updateReviewControls();
-          updateInspector();
+        function addAgentMessage(outing, text) {
+          outing.messages.push({ speaker: "agent", text: text });
         }
 
-        function newOuting() {
-          var id = "outing-" + String(Date.now());
-          var outing = {
-            id: id,
-            title: "New outing",
-            dateLabel: "New chat",
-            idea: "",
-            isNew: true,
-            awaitingCondition: false,
-            interest: "unset",
-            conditions: [],
-            invitedEmails: [],
-            admittedParticipants: [],
-            admissionRequest: null,
-            plan: null,
-            messages: [
-              {
-                speaker: "agent",
-                text: "Start with an idea, a time if you have one, or something you want me to keep in mind."
-              }
-            ]
-          };
-          state.outings.push(outing);
-          state.activeId = id;
-          state.demoId = id;
-          state.view = "chat";
+        function renderAndFocus() {
           render();
           var field = document.getElementById("message-field");
           if (field) {
@@ -1648,8 +954,35 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
           }
         }
 
-        function addAgentMessage(outing, text) {
-          outing.messages.push({ speaker: "agent", text: text });
+        function newOuting() {
+          var id = "outing-" + String(Date.now());
+          var outing = {
+            id: id,
+            title: "New outing",
+            dateLabel: "",
+            idea: "",
+            isNew: true,
+            requestedDate: null,
+            requestedTime: null,
+            timeNeedsClarification: false,
+            responseCutoff: null,
+            interest: "unset",
+            conditions: [],
+            participants: ["Maya Chen"],
+            invitedEmails: [],
+            admittedParticipants: [],
+            admissionRequest: null,
+            previousPlan: null,
+            plan: null,
+            messages: [
+              { speaker: "agent", text: "What would you like to do? Include a date, time, budget, or reply cutoff if you have one." }
+            ]
+          };
+          state.outings.push(outing);
+          state.activeId = id;
+          state.demoId = id;
+          state.view = "chat";
+          renderAndFocus();
         }
 
         function titleFromIdea(idea) {
@@ -1660,162 +993,511 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
           return clean || "New outing";
         }
 
-        function isCondition(text) {
-          return /\b(under|only if|prefer|rather|avoid|can't|cannot|budget|limit|need|must|no more than|not above|allergic|available after|free after)\b/i.test(text);
+        function saveCondition(outing, text) {
+          outing.conditions.push(text);
+          if (/\bSam\b/i.test(text) && outing.participants.indexOf("Sam Rivera") < 0) {
+            outing.participants.push("Sam Rivera");
+          }
+          if (/\bAlex\b/i.test(text) && outing.participants.indexOf("Alex Kim") < 0) {
+            outing.participants.push("Alex Kim");
+          }
         }
 
-        function isYes(text) {
-          return /^(yes|yep|sure|approve|approved|i approve|that works)([\s.!]*)$/i.test(text.trim());
+        function responseCutoffFrom(text) {
+          var match = text.match(/\b(?:responses? by|reply by|respond by|cutoff(?: is)?)\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(?:,?\s+([A-Za-z]+\s+\d{1,2}))?/i);
+          if (!match) {
+            return null;
+          }
+          return match[2] ? match[1] + ", " + match[2] : match[1];
+        }
+
+        function novemberDate(day) {
+          var isoDay = String(day).padStart(2, "0");
+          var date = new Date(Date.UTC(2026, 10, day));
+          var weekday = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][date.getUTCDay()];
+          return {
+            date: weekday + ", November " + day + ", 2026",
+            dateISO: "2026-11-" + isoDay
+          };
+        }
+
+        function requestedDateFrom(text) {
+          var dateText = String(text).replace(/\b(?:responses? by|reply by|respond by|cutoff(?: is)?)\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(?:,?\s+[A-Za-z]+\s+\d{1,2})?/i, "");
+          var explicit = dateText.match(/\b(?:nov(?:ember)?\.?)\s+(6|7|8|9|10|11|12|13|14|15)\b/i);
+          if (explicit) {
+            return novemberDate(Number(explicit[1]));
+          }
+          var weekday = dateText.match(/\b(next\s+)?(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i);
+          if (!weekday) {
+            return null;
+          }
+          var firstDate = {
+            Friday: 6,
+            Saturday: 7,
+            Sunday: 8,
+            Monday: 9,
+            Tuesday: 10,
+            Wednesday: 11,
+            Thursday: 12
+          };
+          var dayName = weekday[2].charAt(0).toUpperCase() + weekday[2].slice(1).toLowerCase();
+          var day = firstDate[dayName];
+          return novemberDate(day + (weekday[1] ? 7 : 0));
+        }
+
+        function requestedTimeFrom(text, idea) {
+          var match = text.match(/\b(?:at|around|about)\s+(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?)?\b/i);
+          if (!match) {
+            match = text.match(/\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?)\b/i);
+          }
+          if (!match) {
+            return null;
+          }
+          var hour = Number(match[1]);
+          var minute = match[2] ? Number(match[2]) : 0;
+          var meridian = (match[3] || "").toLowerCase().replace(/\./g, "");
+          if (!meridian) {
+            var context = String(idea || "").toLowerCase();
+            if (/\b(dinner|restaurant|evening)\b/.test(context)) {
+              meridian = "pm";
+            } else if (/\b(walk|hike|trail|coffee|breakfast|morning)\b/.test(context)) {
+              meridian = "am";
+            } else {
+              return { ambiguous: true };
+            }
+          }
+          var hour24 = hour % 12 + (meridian === "pm" ? 12 : 0);
+          var minuteText = String(minute).padStart(2, "0");
+          var hourText = String(hour);
+          return {
+            time: hourText + ":" + minuteText + " " + meridian.toUpperCase(),
+            time24: String(hour24).padStart(2, "0") + ":" + minuteText,
+            ambiguous: false
+          };
+        }
+
+        function captureNewOutingDetails(outing, text) {
+          var changed = false;
+          var date = requestedDateFrom(text);
+          var time = requestedTimeFrom(text, outing.title + " " + outing.idea);
+          var cutoff = responseCutoffFrom(text);
+          if (date) {
+            outing.requestedDate = date;
+            changed = true;
+          }
+          if (time) {
+            outing.timeNeedsClarification = Boolean(time.ambiguous);
+            if (!time.ambiguous) {
+              outing.requestedTime = time;
+            }
+            changed = true;
+          }
+          if (cutoff) {
+            outing.responseCutoff = cutoff;
+            changed = true;
+          }
+          return changed;
+        }
+
+        function personDisplay(key) {
+          return key === "maya" ? "you" : key === "sam" ? "Sam" : "Alex";
+        }
+
+        function waitingNames(outing) {
+          return outing.plan.attendees.filter(function (name) {
+            var key = nameKey(name);
+            return !key || !outing.plan.approvals[key];
+          }).map(function (name) {
+            var key = nameKey(name);
+            return key ? personDisplay(key) : name;
+          });
+        }
+
+        function approvalSummary(outing) {
+          if (!outing.plan) {
+            return "There isn't a proposal yet.";
+          }
+          if (planExpired(outing) && !everyoneApproved(outing)) {
+            return "The plan's start time has passed, so it wasn't confirmed.";
+          }
+          if (everyoneApproved(outing)) {
+            return "Everyone approved this plan. It's confirmed.";
+          }
+          var waiting = waitingNames(outing);
+          if (outing.plan.approvals.maya) {
+            return "You approved. Still waiting for " + waiting.join(" and ") + ".";
+          }
+          return "The proposal is waiting for " + waiting.join(" and ") + " to approve.";
+        }
+
+        function isExactApproval(text) {
+          return /^(?:yes|sounds good|that works|i['’]?m in)[.!\s]*$/i.test(text.trim());
+        }
+
+        function isConditionalInterest(text) {
+          return /^(?:i['’]?m in|im in|count me in|i['’]?m interested|i am interested|interested)\s+if\b/i.test(text.trim());
+        }
+
+        function isInterestStatement(text) {
+          return /^(?:i['’]?m interested|im interested|interested|count me in|i['’]?m in|im in)\b/i.test(text.trim());
+        }
+
+        function isDisinterest(text) {
+          return /^(?:i['’]?m not interested|im not interested|not interested|not for me|i['’]?m out|im out|i can['’]?t make it|i cannot make it|can['’]?t make it|cannot make it)(?:\b|[.!])/i.test(text.trim());
         }
 
         function isAlternativesRequest(text) {
-          return /\b(alternatives|alternative|other options|another option|different options)\b/i.test(text);
+          return /\b(?:what other options|other options|alternatives|another option|different options)\b/i.test(text);
         }
 
-        function isRevisionRequest(text) {
-          return /\b(move|change|switch|instead|next friday|another day|different date|different time|reschedule)\b/i.test(text);
+        function isWhoQuestion(text) {
+          return /\b(?:who(?:'s| is) (?:coming|going|included)|who will be there|who is coming)\b/i.test(text);
         }
 
-        function statusSummary(outing) {
-          if (!outing.plan) {
-            return "There is no plan waiting for approval.";
-          }
-          var approvals = outing.plan.approvals;
-          if (planExpired(outing) && !everyoneApproved(outing)) {
-            return "Approval closed at the plan start time. This plan is not confirmed.";
-          }
-          var waiting = [];
-          if (!approvals.maya) {
-            waiting.push("you");
-          }
-          if (!approvals.sam) {
-            waiting.push("Sam");
-          }
-          if (!approvals.alex) {
-            waiting.push("Alex");
-          }
-          if (waiting.length === 0) {
-            return "Everyone approved version " + outing.plan.revision + ". The plan is confirmed.";
-          }
-          return "Version " + outing.plan.revision + " is waiting for " + waiting.join(" and ") + " to approve.";
+        function isTimeQuestion(text) {
+          return /\b(?:what time|when is it|what day is it)\b/i.test(text);
+        }
+
+        function isStatusQuestion(text) {
+          return /\b(?:status|who approved|who has approved|are we confirmed|is this confirmed|any updates)\b/i.test(text);
+        }
+
+        function isBudgetChange(text) {
+          return /\b(?:make it|cap it|set it|limit it)\s+\$?\s*20\s*(?:or less|or under|and under)?\b/i.test(text);
+        }
+
+        function isSevenPmChange(text) {
+          return /\b(?:can we do|could we do|let['’]?s do|make it|move it to|change it to|do it at)\s+7(?:\s*:\s*00)?\s*(?:p\.?m\.?)?\s*(?:instead)?\b/i.test(text);
+        }
+
+        function isRestoreRequest(text) {
+          return /\b(?:actually\s+)?(?:keep|use|go back to|restore|revert to)\s+(?:the\s+)?(?:earlier|previous|original)\s+plan\b/i.test(text);
+        }
+
+        function isChangeRequest(text) {
+          return /\b(?:can we do|could we do|move|change|switch|make it|set it|instead|another day|different date|different time|reschedule|earlier|later)\b/i.test(text);
+        }
+
+        function isQuestion(text) {
+          return /\?\s*$/.test(text.trim()) || /^(?:what|who|when|where|how|which|can you tell me)\b/i.test(text.trim());
+        }
+
+        function isCondition(text) {
+          return /\b(under|only if|prefer|rather|avoid|can't|cannot|budget|limit|need|must|no more than|not above|allergic|available after|free after|if Sam|if Alex)\b/i.test(text);
+        }
+
+        function isYesBut(text) {
+          return /^(?:yes|sounds good|that works)\b[\s,]+.+/i.test(text.trim());
         }
 
         function alternativeText() {
-          return "Two more tentative ideas are available if you want them: coffee at Cypress Coffee on Saturday, November 7, 2026 at 10:00 am, estimated at $9 per person, or a casual dinner at home on Friday, November 6, 2026 at 6:30 pm, estimated at $18 per person. These sample ideas are unverified and not booked.";
+          return "Two more unverified sample ideas: coffee at Cypress Coffee in Phoenix on Saturday, November 7 at 10:00 AM for about $9 per person, or a casual dinner at home in Phoenix on Friday, November 6 at 6:30 PM for about $18. Nothing has been checked or booked. These ideas don't change the current proposal.";
         }
 
-        function sendMessage(text) {
-          var outing = activeOuting();
-          var clean = String(text || "").trim();
-          if (!clean) {
+        function pendingAdmission(outing) {
+          return outing.admissionRequest && outing.admissionRequest.status === "pending";
+        }
+
+        function handleAdmissionDecision(outing, clean) {
+          var name = outing.admissionRequest.name;
+          var firstName = name.split(" ")[0];
+          var admitPattern = new RegExp("^(?:admit|let)\\s+" + firstName + "(?:\\s+join)?[.!\\s]*$", "i");
+          var declinePattern = new RegExp("^(?:don't admit|do not admit|decline|keep)\\s+" + firstName + "(?:\\s+out)?[.!\\s]*$", "i");
+          if (admitPattern.test(clean)) {
+            outing.admissionRequest.status = "admitted";
+            outing.admittedParticipants.push(name);
+            outing.participants.push(name);
+            addAgentMessage(outing, name + " can join the planning group. That doesn't add them to this proposal or confirm attendance.");
+            return true;
+          }
+          if (declinePattern.test(clean)) {
+            outing.admissionRequest.status = "declined";
+            addAgentMessage(outing, "I declined " + name + "'s request to join this outing.");
+            return true;
+          }
+          return false;
+        }
+
+        function clonePlan(plan) {
+          return JSON.parse(JSON.stringify(plan));
+        }
+
+        function resetApprovals(plan) {
+          Object.keys(plan.approvals).forEach(function (key) {
+            plan.approvals[key] = false;
+          });
+        }
+
+        function updateStartTime(plan, time, time24) {
+          plan.time = time;
+          plan.time24 = time24;
+          plan.startAt = plan.dateISO + "T" + time24 + ":00-07:00";
+        }
+
+        function changePlan(outing, update, reply) {
+          if (!outing.plan) {
+            return false;
+          }
+          outing.previousPlan = clonePlan(outing.plan);
+          update(outing.plan);
+          resetApprovals(outing.plan);
+          addAgentMessage(outing, reply);
+          return true;
+        }
+
+        function restorePreviousPlan(outing) {
+          if (!outing.plan || !outing.previousPlan) {
+            addAgentMessage(outing, "There isn't an earlier proposal in this chat to restore.");
             return;
           }
-          outing.messages.push({ speaker: "you", text: clean });
+          var current = clonePlan(outing.plan);
+          outing.plan = clonePlan(outing.previousPlan);
+          outing.previousPlan = current;
+          resetApprovals(outing.plan);
+          addAgentMessage(outing, "I put the earlier details back. Everyone needs to approve this proposal again. Does that work for you?");
+        }
 
-          if (outing.plan && isYes(clean)) {
+        function processMessage(outing, clean) {
+          if (pendingAdmission(outing)) {
+            if (handleAdmissionDecision(outing, clean)) {
+              return;
+            }
+            if (/^(?:yes|no|sure|okay|ok)[.!\s]*$/i.test(clean)) {
+              addAgentMessage(outing, "Do you mean the plan or Jordan's request? Type 'admit Jordan' or 'don't admit Jordan' to answer the request.");
+              return;
+            }
+          }
+
+          if (isConditionalInterest(clean)) {
+            outing.interest = "interested";
+            saveCondition(outing, clean);
+            addAgentMessage(outing, "I recorded your interest and condition for this outing. That doesn't approve the current plan.");
+            return;
+          }
+
+          if (isDisinterest(clean)) {
+            outing.interest = "not interested";
+            if (outing.plan && outing.plan.approvals.maya) {
+              outing.plan.approvals.maya = false;
+              addAgentMessage(outing, "I recorded that you can't make it and withdrew your approval. The plan details haven't changed.");
+            } else {
+              addAgentMessage(outing, "I recorded that you're not interested in this outing.");
+            }
+            return;
+          }
+
+          if (isYesBut(clean)) {
+            if (isCondition(clean)) {
+              saveCondition(outing, clean);
+            }
+            addAgentMessage(outing, "I haven't treated that as approval. What would you like changed or clarified?");
+            return;
+          }
+
+          if (/^(?:thanks|thank you|thx)[.!\s]*$/i.test(clean)) {
+            addAgentMessage(outing, outing.plan ? "You're welcome. I haven't changed or approved the plan." : "You're welcome.");
+            return;
+          }
+
+          if (isInterestStatement(clean) && (!isExactApproval(clean) || !outing.plan)) {
+            outing.interest = "interested";
+            addAgentMessage(outing, "I recorded your interest in this outing. It doesn't approve a plan.");
+            return;
+          }
+
+          if (outing.isNew && !outing.idea && !/^(?:what|who|when|where|how|which)\b/i.test(clean) && !isAlternativesRequest(clean)) {
+            outing.idea = clean;
+            outing.title = titleFromIdea(clean);
+            outing.dateLabel = "New";
+            captureNewOutingDetails(outing, clean);
+            var cutoff = outing.responseCutoff;
+            if (isCondition(clean)) {
+              saveCondition(outing, clean);
+            }
+            if (/\bSam\b/i.test(clean) && outing.participants.indexOf("Sam Rivera") < 0) {
+              outing.participants.push("Sam Rivera");
+            }
+            if (/\bAlex\b/i.test(clean) && outing.participants.indexOf("Alex Kim") < 0) {
+              outing.participants.push("Alex Kim");
+            }
+            addAgentMessage(outing, cutoff
+              ? "Got it. I'll use " + cutoff + " as the optional reply cutoff for this outing. What else should I keep in mind?"
+              : "Got it. I'll keep this outing separate. What else should I keep in mind?");
+            return;
+          }
+
+          if (outing.isNew && outing.idea && !outing.plan && captureNewOutingDetails(outing, clean)) {
+            var cutoffDetail = responseCutoffFrom(clean);
+            var dateDetail = requestedDateFrom(clean);
+            var timeDetail = requestedTimeFrom(clean, outing.title + " " + outing.idea);
+            if (outing.timeNeedsClarification) {
+              addAgentMessage(outing, "Did you mean 7:00 AM or 7:00 PM?");
+            } else if (cutoffDetail && (dateDetail || timeDetail)) {
+              addAgentMessage(outing, "Got it. I'll use that timing and set " + cutoffDetail + " as the reply cutoff.");
+            } else if (cutoffDetail) {
+              addAgentMessage(outing, "Got it. I'll use " + cutoffDetail + " as the optional reply cutoff.");
+            } else {
+              addAgentMessage(outing, "Got it. I'll use that date or time for this outing.");
+            }
+            return;
+          }
+
+          if (isAlternativesRequest(clean)) {
+            addAgentMessage(outing, alternativeText());
+            return;
+          }
+
+          if (isWhoQuestion(clean)) {
+            addAgentMessage(outing, outing.plan
+              ? "The current attendees are " + outing.plan.attendees.join(", ") + "."
+              : "There isn't an attendee list yet. Who would you like included?");
+            return;
+          }
+
+          if (isTimeQuestion(clean)) {
+            addAgentMessage(outing, outing.plan
+              ? "It's " + outing.plan.date + " at " + outing.plan.time + " " + outing.plan.timezone + "."
+              : "There isn't a proposed time yet. What day and time should I consider?");
+            return;
+          }
+
+          if (isStatusQuestion(clean)) {
+            addAgentMessage(outing, approvalSummary(outing));
+            return;
+          }
+
+          if (isExactApproval(clean)) {
             approveCurrentPlan(outing);
             return;
           }
-          if (outing.plan && isRevisionRequest(clean)) {
-            revisePlan(outing, clean);
+
+          if (isRestoreRequest(clean)) {
+            restorePreviousPlan(outing);
             return;
           }
-          if (outing.plan && /\b(status|who approved|who has approved|update)\b/i.test(clean)) {
-            addAgentMessage(outing, statusSummary(outing));
-            render();
+
+          if (outing.plan && isSevenPmChange(clean)) {
+            changePlan(outing, function (plan) {
+              updateStartTime(plan, "7:00 PM", "19:00");
+            }, "I moved the sample dinner to 7:00 PM on " + outing.plan.date + ". Does that work for you?");
             return;
           }
-          if (isAlternativesRequest(clean)) {
-            addAgentMessage(outing, alternativeText());
-            render();
+
+          if (outing.plan && isBudgetChange(clean)) {
+            changePlan(outing, function (plan) {
+              plan.cost = "$18 estimated per person";
+            }, "I updated the sample estimate to $18 per person. Does that work for you?");
             return;
           }
-          if (outing.awaitingCondition || isCondition(clean)) {
-            outing.conditions.push(clean);
-            outing.awaitingCondition = false;
-            if (/\b(interested|i'm in|count me in)\b/i.test(clean)) {
-              outing.interest = "interested";
+
+          if (outing.plan && isChangeRequest(clean)) {
+            addAgentMessage(outing, "I can change the time to 7:00 PM or the dinner estimate to $18. Which change did you mean?");
+            return;
+          }
+
+          if (outing.plan && isQuestion(clean)) {
+            addAgentMessage(outing, "I can clarify the plan, but I haven't changed or approved it. What detail should I explain?");
+            return;
+          }
+
+          if (isCondition(clean)) {
+            saveCondition(outing, clean);
+            if (outing.plan && /\$\s*20|under\s+20|no more than\s+20/i.test(clean) && !isBudgetChange(clean)) {
+              addAgentMessage(outing, "The current estimate is $28 per person. Should I look for a sample option at $20 or less?");
+            } else {
+              addAgentMessage(outing, "Got it. I'll keep that condition with this outing. It doesn't approve or change the current plan.");
             }
-            addAgentMessage(outing, "Saved for this outing. I will use it as a private condition when I look for a plan.");
-            render();
             return;
           }
-          if (/^(i'm interested|im interested|interested|count me in|i'm in)$/i.test(clean)) {
-            outing.interest = "interested";
-            addAgentMessage(outing, "I marked you as interested in this outing. That does not approve a plan.");
-            render();
-            return;
-          }
-          if (/^(i'm not interested|im not interested|not interested|not for me|i'm out|im out)$/i.test(clean)) {
-            outing.interest = "not interested";
-            addAgentMessage(outing, "I marked you as not interested in this outing.");
-            render();
-            return;
-          }
-          if (outing.isNew && !outing.idea) {
-            outing.idea = clean;
-            outing.title = titleFromIdea(clean);
-          } else if (!outing.idea) {
+
+          if (!outing.idea) {
             outing.idea = clean;
           }
-          addAgentMessage(outing, "I will keep that in this private chat. You can share a condition or say whether you are interested whenever you are ready.");
-          render();
+          addAgentMessage(outing, "I kept that with this outing. Tell me what you'd like to plan or change.");
         }
 
-        function setInterest(interest) {
-          var outing = activeOuting();
-          if (interest === "yes") {
-            outing.interest = "interested";
-            outing.messages.push({ speaker: "you", text: "I'm interested in this outing." });
-            addAgentMessage(outing, "I marked you as interested. This does not approve a plan.");
+        function approveCurrentPlan(outing) {
+          if (!outing.plan) {
+            addAgentMessage(outing, "There isn't a proposal to approve yet.");
+            return;
+          }
+          if (everyoneApproved(outing)) {
+            addAgentMessage(outing, "Everyone approved this plan. It's confirmed.");
+            return;
+          }
+          if (planExpired(outing)) {
+            addAgentMessage(outing, "The plan's start time has passed, so it wasn't confirmed.");
+            return;
+          }
+          if (outing.plan.approvals.maya) {
+            var waiting = waitingNames(outing);
+            addAgentMessage(outing, "You already approved. Still waiting for " + waiting.join(" and ") + ".");
+            return;
+          }
+          outing.plan.approvals.maya = true;
+          if (everyoneApproved(outing)) {
+            addAgentMessage(outing, "You're in. The plan is confirmed.");
           } else {
-            outing.interest = "not interested";
-            outing.messages.push({ speaker: "you", text: "I'm not interested in this outing." });
-            addAgentMessage(outing, "I marked you as not interested in this outing.");
+            var others = waitingNames(outing).filter(function (name) {
+              return name !== "you";
+            });
+            addAgentMessage(outing, others.length
+              ? "You're in. I'm waiting for " + others.join(" and ") + " to confirm."
+              : "You're in. The plan is confirmed.");
           }
-          render();
         }
 
-        function addConditionPrompt() {
-          var outing = activeOuting();
-          outing.awaitingCondition = true;
-          render();
-          var field = document.getElementById("message-field");
-          if (field) {
-            field.focus();
-          }
+        function createPlan(activity, location, date, dateISO, time, time24, cost, attendees) {
+          return {
+            activity: activity,
+            location: location,
+            date: date,
+            dateISO: dateISO,
+            time: time,
+            time24: time24,
+            timezone: "MST (Phoenix)",
+            cost: cost + " estimated per person",
+            attendees: attendees.slice(),
+            startAt: dateISO + "T" + time24 + ":00-07:00",
+            approvals: { maya: false, sam: false, alex: false }
+          };
         }
 
         function samplePlanFor(outing) {
-          var idea = (outing.title + " " + outing.idea).toLowerCase();
+          var idea = (outing.title + " " + outing.idea + " " + outing.conditions.join(" ")).toLowerCase();
+          var attendees = outing.participants.slice();
+          if (attendees.indexOf("Maya Chen") < 0) {
+            attendees.unshift("Maya Chen");
+          }
+          var requestedDate = outing.requestedDate;
+          var requestedTime = outing.requestedTime;
+          if (outing.timeNeedsClarification) {
+            return null;
+          }
           if (/\b(walk|hike|trail)\b/.test(idea)) {
-            return {
-              activity: "A morning walk at Papago Park, Phoenix",
-              date: "Saturday, November 7, 2026",
-              time: "9:00 am",
-              deadlineAt: "2026-11-07T09:00:00-07:00",
-              cost: "$0",
-              attendees: ["Maya Chen", "Sam Rivera", "Alex Kim"]
-            };
+            var walkDate = requestedDate || novemberDate(7);
+            var walkTime = requestedTime || { time: "9:00 AM", time24: "09:00" };
+            return createPlan("Morning walk at Papago Park", "Phoenix", walkDate.date, walkDate.dateISO, walkTime.time, walkTime.time24, "$0", attendees);
           }
           if (/\b(coffee|cafe|café)\b/.test(idea)) {
-            return {
-              activity: "Coffee at Cypress Coffee, 19 W Juniper St, Phoenix",
-              date: "Saturday, November 7, 2026",
-              time: "10:00 am",
-              deadlineAt: "2026-11-07T10:00:00-07:00",
-              cost: "$9",
-              attendees: ["Maya Chen", "Sam Rivera", "Alex Kim"]
-            };
+            var coffeeDate = requestedDate || novemberDate(7);
+            var coffeeTime = requestedTime || { time: "10:00 AM", time24: "10:00" };
+            return createPlan("Coffee at Cypress Coffee", "Phoenix", coffeeDate.date, coffeeDate.dateISO, coffeeTime.time, coffeeTime.time24, "$9", attendees);
           }
-          return {
-            activity: "Dinner at Saffron Table, 18 W Juniper St, Phoenix",
-            date: "Friday, November 6, 2026",
-            time: "6:30 pm",
-            deadlineAt: "2026-11-06T18:30:00-07:00",
-            cost: "$28",
-            attendees: ["Maya Chen", "Sam Rivera", "Alex Kim"]
-          };
+          if (/\b(dinner|restaurant|food|meal)\b/.test(idea)) {
+            var dinnerDate = requestedDate || novemberDate(6);
+            var dinnerTime = requestedTime || { time: "6:30 PM", time24: "18:30" };
+            return createPlan("Dinner at Saffron Table", "Phoenix", dinnerDate.date, dinnerDate.dateISO, dinnerTime.time, dinnerTime.time24, "$28", attendees);
+          }
+          if (requestedDate && requestedTime) {
+            var activity = outing.idea
+              .replace(/\b(?:this|next)?\s*(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b.*$/i, "")
+              .replace(/\b(?:at|around|about)\s+\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?/i, "")
+              .replace(/^(?:let['’]?s(?: go)?|we can|we should|i want to)\s+/i, "")
+              .trim();
+            return createPlan(activity || outing.title, "Phoenix", requestedDate.date, requestedDate.dateISO, requestedTime.time, requestedTime.time24, "$25", attendees);
+          }
+          return null;
         }
 
         function advanceNegotiation(outing) {
@@ -1823,119 +1505,64 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
             return;
           }
           var sample = samplePlanFor(outing);
-          outing.plan = {
-            revision: 1,
-            activity: sample.activity,
-            date: sample.date,
-            time: sample.time,
-            deadlineAt: sample.deadlineAt,
-            cost: sample.cost,
-            attendees: sample.attendees,
-            changeNote: "",
-            approvals: {
-              maya: false,
-              sam: false,
-              alex: false
-            }
-          };
-          outing.editingRevision = false;
-          addAgentMessage(outing, "The agents have one tentative recommendation. Review its details and approve this version if it works for you.");
-          state.activeId = outing.id;
-          state.view = "chat";
-          render();
-          announce("A tentative plan is waiting in " + outing.title + ".");
-        }
-
-        function approveCurrentPlan(outing) {
-          if (!outing.plan || outing.plan.approvals.maya) {
-            return;
-          }
-          if (planExpired(outing)) {
-            addAgentMessage(outing, "The approval window ended at the plan start time. You can request a new version.");
+          if (!sample) {
+            addAgentMessage(outing, outing.timeNeedsClarification
+              ? "Did you mean 7:00 AM or 7:00 PM?"
+              : "What day and time should I use for a sample proposal?");
+            state.activeId = outing.id;
+            state.view = "chat";
             render();
             return;
           }
-          var version = outing.plan.revision;
-          outing.plan.approvals.maya = true;
-          addAgentMessage(outing, statusSummary(outing));
+          outing.plan = sample;
+          outing.previousPlan = null;
+          addAgentMessage(outing, "I found a tentative sample plan. Does that work for you?");
+          state.activeId = outing.id;
+          state.view = "chat";
           render();
-          announce(everyoneApproved(outing) ? "Everyone confirmed version " + version + "." : "Your approval was saved for version " + version + ".");
-        }
-
-        function revisePlan(outing, request) {
-          if (!outing.plan) {
-            return;
-          }
-          outing.plan.revision += 1;
-          outing.plan.date = "Friday, November 13, 2026";
-          outing.plan.time = "6:30 pm";
-          outing.plan.deadlineAt = "2026-11-13T18:30:00-07:00";
-          outing.plan.changeNote = request;
-          outing.plan.approvals = {
-            maya: false,
-            sam: false,
-            alex: false
-          };
-          outing.editingRevision = false;
-          addAgentMessage(outing, "I made version " + outing.plan.revision + " for Friday, November 13, 2026 at 6:30 pm. Your earlier approvals do not apply to this version.");
-          render();
-          announce("A new version is waiting for approval.");
+          announce("A sample proposal is in " + outing.title + ".");
         }
 
         function simulateFriendApproval(person) {
           var outing = demoOuting();
-          if (!outing.plan || outing.plan.approvals[person]) {
+          if (!outing.plan || !hasAttendee(outing, person) || outing.plan.approvals[person]) {
             return;
           }
           if (planExpired(outing)) {
+            addAgentMessage(outing, "The plan's start time has passed, so it wasn't confirmed.");
+            state.activeId = outing.id;
+            state.view = "chat";
             render();
-            announce("The approval window closed at the plan start time.");
             return;
           }
           outing.plan.approvals[person] = true;
           var name = person === "sam" ? "Sam" : "Alex";
-          addAgentMessage(outing, name + " approved version " + outing.plan.revision + ". " + statusSummary(outing));
+          if (everyoneApproved(outing)) {
+            addAgentMessage(outing, name + " is in. Everyone approved the plan, so it's confirmed.");
+          } else {
+            addAgentMessage(outing, name + " is in. Still waiting for " + waitingNames(outing).join(" and ") + ".");
+          }
           state.activeId = outing.id;
           state.view = "chat";
           render();
-          announce(name + " approved version " + outing.plan.revision + ".");
         }
 
         function simulateAdmissionRequest() {
           var outing = demoOuting();
-          if (outing.admissionRequest && outing.admissionRequest.status === "pending") {
+          if (pendingAdmission(outing)) {
             return;
           }
-          outing.admissionRequest = {
-            name: "Jordan Lee",
-            status: "pending"
-          };
-          addAgentMessage(outing, "Jordan Lee asked to join this outing through a shared link. You can decide whether to admit them here.");
+          outing.admissionRequest = { name: "Jordan Lee", status: "pending" };
+          addAgentMessage(outing, "Jordan Lee asked to join through a shared link. Type 'admit Jordan' or 'don't admit Jordan' to decide.");
           state.activeId = outing.id;
           state.view = "chat";
-          render();
-        }
-
-        function handleAdmission(admit) {
-          var outing = activeOuting();
-          if (!outing.admissionRequest || outing.admissionRequest.status !== "pending") {
-            return;
-          }
-          var name = outing.admissionRequest.name;
-          outing.admissionRequest.status = admit ? "admitted" : "declined";
-          if (admit) {
-            outing.admittedParticipants.push(name);
-            addAgentMessage(outing, "You admitted " + name + " to the planning group. They are not on the attendee list and have not confirmed a plan.");
-          } else {
-            addAgentMessage(outing, "You declined " + name + "'s request to join this outing.");
-          }
           render();
         }
 
         function openInvite() {
           var outing = activeOuting();
           state.inviteFor = outing.id;
-          document.getElementById("invite-outing-label").textContent = "For " + outing.title + ". This invitation is simulated.";
+          document.getElementById("invite-outing-label").textContent = "For " + outing.title + ". This sample is not sent.";
           document.getElementById("invite-result").textContent = "";
           document.getElementById("invite-email").value = "";
           inviteDialog.showModal();
@@ -1963,6 +1590,7 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
         document.getElementById("next-variant").addEventListener("click", function () {
           setVariant(1);
         });
+
         document.addEventListener("click", function (event) {
           var button = event.target.closest("button[data-action]");
           if (!button) {
@@ -1983,26 +1611,6 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
             openInvite();
           } else if (action === "close-invite") {
             inviteDialog.close();
-          } else if (action === "interest") {
-            setInterest(button.getAttribute("data-interest"));
-          } else if (action === "add-condition") {
-            addConditionPrompt();
-          } else if (action === "approve-plan") {
-            approveCurrentPlan(activeOuting());
-          } else if (action === "request-revision") {
-            activeOuting().editingRevision = true;
-            render();
-            var revisionField = document.getElementById("revision-field");
-            if (revisionField) {
-              revisionField.focus();
-            }
-          } else if (action === "cancel-revision") {
-            activeOuting().editingRevision = false;
-            render();
-          } else if (action === "admit") {
-            handleAdmission(true);
-          } else if (action === "decline-admission") {
-            handleAdmission(false);
           } else if (action === "demo-advance") {
             advanceNegotiation(demoOuting());
           } else if (action === "demo-sam") {
@@ -2022,28 +1630,38 @@ Three variants on the home route: A Conversation, B Focus, and C Messenger. Thro
           }
         });
 
+        document.addEventListener("input", function (event) {
+          if (event.target && event.target.id === "message-field") {
+            event.target.style.height = "auto";
+            event.target.style.height = Math.min(event.target.scrollHeight, 116) + "px";
+          }
+        });
+
         document.addEventListener("submit", function (event) {
           var form = event.target;
           if (form.id === "chat-form") {
             event.preventDefault();
             var field = document.getElementById("message-field");
-            sendMessage(field.value);
-          } else if (form.id === "revision-form") {
-            event.preventDefault();
-            var changeField = document.getElementById("revision-field");
-            revisePlan(activeOuting(), changeField.value.trim());
+            var clean = field.value.trim();
+            if (!clean) {
+              return;
+            }
+            var outing = activeOuting();
+            outing.messages.push({ speaker: "you", text: clean });
+            processMessage(outing, clean);
+            renderAndFocus();
           } else if (form.id === "invite-form") {
             event.preventDefault();
             var emailField = document.getElementById("invite-email");
             var email = emailField.value.trim().toLowerCase();
-            var outing = state.outings.find(function (item) {
+            var inviteOuting = state.outings.find(function (item) {
               return item.id === state.inviteFor;
             });
-            if (!outing || !email) {
+            if (!inviteOuting || !email) {
               return;
             }
-            if (outing.invitedEmails.indexOf(email) < 0) {
-              outing.invitedEmails.push(email);
+            if (inviteOuting.invitedEmails.indexOf(email) < 0) {
+              inviteOuting.invitedEmails.push(email);
             }
             document.getElementById("invite-result").textContent = "Sample invite added. No email sent.";
             updateInspector();
