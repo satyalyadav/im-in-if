@@ -138,6 +138,10 @@ function errorText(code: string): string {
   return ERROR_COPY[code] ?? "That change could not be saved. Review it and try again.";
 }
 
+function responseLabel(status: string): string {
+  return status === "pending" ? "not recorded yet" : status.replaceAll("_", " ");
+}
+
 function PlannerButton({
   children,
   disabled,
@@ -256,7 +260,7 @@ function OfferPanel({ workspace, busy, act }: { workspace: Workspace; busy: bool
         <PlannerButton disabled={busy} onClick={() => void act({ action: "generate_offer" })}>
           Ask agent for an offer
         </PlannerButton>
-      ) : <p className="empty-light">Tell your agent what would make this outing work, then choose “I’m interested” to draft an offer.</p>}
+      ) : <p className="empty-light">Tell your agent what would make this outing work and say you’re interested, then ask for an offer.</p>}
 
       {workspace.myDraftOffers.map((offer) => (
         <article className="offer-card offer-private" key={offer.id}>
@@ -513,6 +517,9 @@ export function OutingWorkspace({ initialWorkspace }: { initialWorkspace: Worksp
         <p className="playbill-kicker">Your outing</p>
         <h1>{workspace.outing.suggestion}</h1>
         <p className="planner-status">{workspace.outing.status.replaceAll("_", " ")}</p>
+        <p className="condition-status">
+          Your response: {responseLabel(workspace.myResponseStatus)}
+        </p>
         <div className="participant-summary">
           <p className="cutoff-label">Admitted people</p>
           <ul>{workspace.participants.map((person) => <li key={person.userId}>{person.displayName}</li>)}</ul>
@@ -561,16 +568,6 @@ export function OutingWorkspace({ initialWorkspace }: { initialWorkspace: Worksp
           showPlaybill={false}
           onConversationUpdate={refresh}
         />
-        <section className="planner-card response-card" aria-labelledby="response-title">
-          <p className="playbill-kicker">Your response</p>
-          <h2 id="response-title">Would you like to be considered?</h2>
-          <p className="planner-help">This is only your interest. It is not attendance or confirmation.</p>
-          <div className="planner-actions">
-            <PlannerButton disabled={busy || !workspace.myConditionsReady || Boolean(workspace.outing.cutoffProcessedAt)} onClick={() => void act({ action: "set_interest", interested: true })}>I’m interested</PlannerButton>
-            <button className="text-button" type="button" disabled={busy || Boolean(workspace.outing.cutoffProcessedAt)} onClick={() => void act({ action: "set_interest", interested: false })}>I’m not interested</button>
-          </div>
-          <p className="condition-status">Your response: {workspace.myResponseStatus.replaceAll("_", " ")}</p>
-        </section>
         <CatalogPanel workspace={workspace} busy={busy} act={act} />
         <OfferPanel workspace={workspace} busy={busy} act={act} />
         <AgreementPanel workspace={workspace} busy={busy} act={act} />

@@ -3,9 +3,11 @@ import {
   AgentError,
   getSafeAgentFailureDiagnostic,
   type Agent,
+  type ParticipantResponseStatus,
 } from "@/lib/agent";
 import { formatZonedDateTime, resolveCutoffInstant } from "@/lib/cutoff";
 import { prepareConversationConditionUpdate } from "@/lib/conversation-conditions";
+import { prepareConversationInterest } from "@/lib/conversation-intent";
 import type { Db } from "@/lib/db";
 import { processOutingDeadlines } from "@/lib/maintenance";
 import {
@@ -248,8 +250,8 @@ async function generateReply(
       [outing.id, context.userId],
     );
     const [sessions, preferenceRows, participantRows, lockedRows] = await Promise.all([
-      context.db.query<{ agent_session_id: string }>(
-        `select agent_session_id from participants
+      context.db.query<{ agent_session_id: string; response_status: ParticipantResponseStatus }>(
+        `select agent_session_id, response_status from participants
           where outing_id = $1 and user_id = $2 and admission_status = 'admitted'`,
         [outing.id, context.userId],
       ),
@@ -297,6 +299,7 @@ async function generateReply(
       currentConditions: current,
       conditionsReady: stored.interpretation_ready,
       conditionsLocked: lockedRows[0]?.locked ?? false,
+      responseStatus: sessions[0].response_status,
       participants,
       sessionId: sessions[0].agent_session_id,
     });
@@ -312,8 +315,31 @@ async function generateReply(
       timeZone: outing.cutoff_time_zone,
       text: agentReply.text,
     });
-    const parsedCondition = condition.interpretation
-      ? ConditionInterpretationSchema.safeParse(condition.interpretation)
+    const interest = prepareConversationInterest({
+      ownerText: history.at(-1)?.content ?? "",
+      suggested: agentReply.interestUpdate,
+      currentStatus: sessions[0].response_status,
+      conditionsReady: condition.ready,
+      clarifyingQuestions: condition.interpretation?.clarifyingQuestions ?? [],
+      confirmedAttendee: lockedRows[0]?.locked ?? false,
+      cutoffPassed: Boolean(outing.cutoff_processed_at) ||
+        (outing.cutoff_at !== null && new Date(outing.cutoff_at) <= new Date()),
+      text: condition.text,
+    });
+    const interestChanged = interest.interest !== null &&
+      interest.interest !== sessions[0].response_status;
+    const replyText = interest.interest === "interested" &&
+      condition.text !== agentReply.text &&
+      !/recorded your interest/i.test(interest.text)
+      ? `${interest.text.trim()} I've recorded your interest.`
+      : interest.text;
+    const conditionsReady = condition.ready || interest.markConditionsReady;
+    const conditionChanged = condition.changed ||
+      (conditionsReady && !stored.interpretation_ready);
+    const finalInterpretation = condition.interpretation ??
+      (interest.markConditionsReady ? emptyConditionInterpretation() : null);
+    const parsedCondition = finalInterpretation
+      ? ConditionInterpretationSchema.safeParse(finalInterpretation)
       : null;
     if (parsedCondition && !parsedCondition.success) {
       throw new AgentError("invalid_output", "agent returned invalid conditions");
@@ -322,6 +348,7 @@ async function generateReply(
     const saved = await context.db.query<{
       inserted_reply_count: number | string;
       condition_write_count: number | string;
+      interest_write_count: number | string;
       marked_user_count: number | string;
     }>(
       `with outing_guard as materialized (
@@ -339,8 +366,8 @@ async function generateReply(
           for update
        ), condition_write as (
          update participant_preferences pref
-            set interpretation = $8::jsonb,
-                interpretation_ready = $9,
+            set interpretation = $11::jsonb,
+                interpretation_ready = $12,
                 conditions_version = pref.conditions_version + 1,
                 updated_at = now()
            where pref.outing_id = $1 and pref.user_id = $3
@@ -363,14 +390,37 @@ async function generateReply(
             and not exists (
               select 1 from messages m where m.reply_to_message_id = $2 and m.owner_user_id = $3
             )
-       ), valid_turn as (
+       ), condition_turn as (
          select outing_id, user_id from condition_write
          union all
          select outing_id, user_id from unchanged_conditions
+       ), interest_write as (
+         update participants p
+            set response_status = $7, responded_at = now()
+          where p.outing_id = $1 and p.user_id = $3 and p.admission_status = 'admitted'
+            and $6::boolean and p.response_status = $8 and p.response_status <> 'no_response'
+            and exists (select 1 from condition_turn)
+            and not exists (
+              select 1 from outings o
+               where o.id = $1
+                 and (o.cutoff_processed_at is not null
+                   or (o.cutoff_at is not null and o.cutoff_at <= now()))
+            )
+            and not exists (
+              select 1 from proposals p2 where p2.outing_id = $1 and p2.status = 'confirmed'
+                and p2.attendee_user_ids @> jsonb_build_array($3::text)
+            )
+            and not exists (
+              select 1 from messages m where m.reply_to_message_id = $2 and m.owner_user_id = $3
+            )
+          returning p.user_id
+       ), valid_turn as (
+         select outing_id, user_id from condition_turn
+          where not $6::boolean or exists (select 1 from interest_write)
        ), inserted_reply as (
          insert into messages
            (id, outing_id, owner_user_id, role, content, reply_to_message_id, status, completed_at)
-         select $6, o.id, $3, 'agent', $7, $2, 'complete', now()
+         select $9, o.id, $3, 'agent', $10, $2, 'complete', now()
            from outing_guard o where exists (select 1 from valid_turn)
          on conflict do nothing returning id
       ), marked_user as (
@@ -382,7 +432,7 @@ async function generateReply(
        ), superseded_proposals as (
          update proposals set status = 'superseded'
           where outing_id = $1 and status = 'published'
-            and exists (select 1 from condition_write)
+            and (exists (select 1 from condition_write) or exists (select 1 from interest_write))
          returning id
        ), expired_joins as (
          update join_requests set status = 'expired'
@@ -397,6 +447,7 @@ async function generateReply(
        )
        select (select count(*)::int from inserted_reply) as inserted_reply_count,
               (select count(*)::int from condition_write) as condition_write_count,
+              (select count(*)::int from interest_write) as interest_write_count,
               (select count(*)::int from marked_user) as marked_user_count,
               (select count(*)::int from expired_joins) as expired_join_count,
               (select count(*)::int from expired_departures) as expired_departure_count`,
@@ -405,13 +456,14 @@ async function generateReply(
         userMessage.id,
         context.userId,
         expectedVersion,
-        condition.changed,
+        conditionChanged,
+        interestChanged,
+        interest.interest,
+        sessions[0].response_status,
         crypto.randomUUID(),
-        condition.text,
-        condition.changed && parsedCondition?.success
-          ? JSON.stringify(parsedCondition.data)
-          : null,
-        condition.ready,
+        replyText,
+        finalInterpretation ? JSON.stringify(finalInterpretation) : null,
+        conditionsReady,
       ],
     );
     if (!saved.length) {

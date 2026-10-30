@@ -115,6 +115,15 @@ function goUsage() {
 }
 
 function call(id: string, argumentsValue: unknown, name = "private_plan_reply") {
+  if (
+    name === "private_plan_reply" &&
+    argumentsValue &&
+    typeof argumentsValue === "object" &&
+    !Array.isArray(argumentsValue) &&
+    !("interestUpdate" in argumentsValue)
+  ) {
+    return { id, name, arguments: { interestUpdate: null, ...argumentsValue } };
+  }
   return { id, name, arguments: argumentsValue };
 }
 
@@ -200,6 +209,7 @@ function turnInput() {
     currentConditions: null,
     conditionsReady: false,
     conditionsLocked: false,
+    responseStatus: "pending" as const,
     participants: [{ userId: "owner-user", displayName: "Owner" }],
     sessionId: "ses_synthetic-conversation-1",
   };
@@ -328,7 +338,7 @@ describe("OpenCode Go agent boundary", () => {
   });
 
   it("disables DeepSeek thinking before sending the forced typed reply tool", async () => {
-    const expected = { text: "What time works?", conditionUpdate: null };
+    const expected = { text: "What time works?", interestUpdate: null, conditionUpdate: null };
     const { baseURL, captured } = await fakeGo((_request, response, body) => {
       const thinking = body.thinking as { type?: string } | undefined;
       if (body.tool_choice && thinking?.type !== "disabled") {
@@ -572,6 +582,7 @@ describe("OpenCode Go agent boundary", () => {
   it("pins DeepSeek, uses an honest app identity and stable session, and accepts explicit zero-cost metadata", async () => {
     const expected = {
       text: "Compare two synthetic times.",
+      interestUpdate: null,
       conditionUpdate: {
         hard: {
           availableWindows: [],
@@ -620,10 +631,11 @@ describe("OpenCode Go agent boundary", () => {
     const parameters = tools[0].function.parameters;
     expect(parameters).toMatchObject({
       type: "object",
-      required: ["text", "conditionUpdate"],
+      required: ["text", "interestUpdate", "conditionUpdate"],
       additionalProperties: false,
       properties: {
         text: { type: "string" },
+        interestUpdate: { anyOf: expect.any(Array) },
         conditionUpdate: { anyOf: expect.any(Array) },
       },
     });
