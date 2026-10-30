@@ -709,6 +709,18 @@ describe("OpenCode Go agent boundary", () => {
     expect(prompt).not.toContain("Invalid Date");
   });
 
+  it("rejects a reply that omits the required interest field", async () => {
+    const { baseURL } = await fakeGo((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(toolCallCompletion([
+        { id: "call-1", name: "private_plan_reply", arguments: { text: "Synthetic", conditionUpdate: null } },
+      ], goUsage()));
+    });
+
+    await expect(agent(baseURL).reply(turnInput()))
+      .rejects.toMatchObject({ code: "invalid_output" } satisfies Partial<AgentError>);
+  });
+
   it("fails closed when mandatory condition fields have malformed types", async () => {
     const malformed = {
       text: "I saved those conditions.",

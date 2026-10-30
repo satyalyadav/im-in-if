@@ -20,6 +20,7 @@ describe("conversation interest", () => {
       interest: null,
       text: "You're in.",
       markConditionsReady: false,
+      refusedForCutoff: false,
     });
   });
 
@@ -28,6 +29,7 @@ describe("conversation interest", () => {
       interest: null,
       text: "A few times could work.",
       markConditionsReady: false,
+      refusedForCutoff: false,
     });
   });
 
@@ -36,6 +38,7 @@ describe("conversation interest", () => {
       interest: "interested",
       text: "You're in.",
       markConditionsReady: true,
+      refusedForCutoff: false,
     });
   });
 
@@ -46,6 +49,7 @@ describe("conversation interest", () => {
       interest: null,
       text: "You're in. I haven't recorded your interest yet.",
       markConditionsReady: false,
+      refusedForCutoff: false,
     });
   });
 
@@ -57,6 +61,7 @@ describe("conversation interest", () => {
       interest: "not_interested",
       text: "You're in.",
       markConditionsReady: false,
+      refusedForCutoff: false,
     });
   });
 

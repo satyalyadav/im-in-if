@@ -6,6 +6,7 @@ export type ConversationInterestResult = {
   interest: ConversationInterest | null;
   text: string;
   markConditionsReady: boolean;
+  refusedForCutoff: boolean;
 };
 
 type Input = {
@@ -23,6 +24,7 @@ function unchanged(input: Input): ConversationInterestResult {
     interest: null,
     text: input.text,
     markConditionsReady: false,
+    refusedForCutoff: false,
   };
 }
 
@@ -49,7 +51,12 @@ export function prepareConversationInterest(input: Input): ConversationInterestR
       !input.cutoffPassed &&
       input.clarifyingQuestions.length === 0
     ) {
-      return { interest: null, text: input.text, markConditionsReady: true };
+      return {
+        interest: null,
+        text: input.text,
+        markConditionsReady: true,
+        refusedForCutoff: false,
+      };
     }
     return unchanged(input);
   }
@@ -64,6 +71,7 @@ export function prepareConversationInterest(input: Input): ConversationInterestR
           "You're on the confirmed plan, so I haven't changed your interest. " +
           "Request to leave the roster if it no longer works for you. The usual departure rules still apply.",
         markConditionsReady: false,
+        refusedForCutoff: false,
       };
     }
     return unchanged(input);
@@ -74,6 +82,7 @@ export function prepareConversationInterest(input: Input): ConversationInterestR
       interest: null,
       text: "The response cutoff has passed, so I haven't changed your interest.",
       markConditionsReady: false,
+      refusedForCutoff: true,
     };
   }
 
@@ -82,6 +91,7 @@ export function prepareConversationInterest(input: Input): ConversationInterestR
       interest: "not_interested",
       text: input.text,
       markConditionsReady: false,
+      refusedForCutoff: false,
     };
   }
 
@@ -90,6 +100,7 @@ export function prepareConversationInterest(input: Input): ConversationInterestR
       interest: null,
       text: appendMissing(input.text, "I haven't recorded your interest yet."),
       markConditionsReady: false,
+      refusedForCutoff: false,
     };
   }
 
@@ -97,5 +108,6 @@ export function prepareConversationInterest(input: Input): ConversationInterestR
     interest: "interested",
     text: input.text,
     markConditionsReady: !input.conditionsReady,
+    refusedForCutoff: false,
   };
 }

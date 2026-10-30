@@ -315,30 +315,34 @@ async function generateReply(
       timeZone: outing.cutoff_time_zone,
       text: agentReply.text,
     });
+    const cutoffPassed = Boolean(outing.cutoff_processed_at) ||
+      (outing.cutoff_at !== null && new Date(outing.cutoff_at) <= new Date());
     const interest = prepareConversationInterest({
       suggested: agentReply.interestUpdate,
       currentStatus: sessions[0].response_status,
       conditionsReady: condition.ready,
       clarifyingQuestions: condition.interpretation?.clarifyingQuestions ?? [],
       confirmedAttendee: lockedRows[0]?.locked ?? false,
-      cutoffPassed: Boolean(outing.cutoff_processed_at) ||
-        (outing.cutoff_at !== null && new Date(outing.cutoff_at) <= new Date()),
+      cutoffPassed,
       text: condition.text,
     });
     const interestChanged = interest.interest !== null &&
       interest.interest !== sessions[0].response_status;
     const replyText = interestChanged && interest.interest === "interested" &&
-      !/I've recorded your interest/i.test(interest.text)
+      !/I[’']ve recorded your interest/i.test(interest.text)
       ? `${interest.text.trim()} I've recorded your interest.`
       : interestChanged && interest.interest === "not_interested" &&
-          !/I've noted that you're not interested/i.test(interest.text)
+          !/I[’']ve noted that you're not interested/i.test(interest.text)
         ? `${interest.text.trim()} I've noted that you're not interested.`
         : interest.text;
-    const conditionsReady = condition.ready || interest.markConditionsReady;
-    const conditionChanged = condition.changed ||
-      (conditionsReady && !stored.interpretation_ready);
-    const finalInterpretation = condition.interpretation ??
-      (interest.markConditionsReady ? emptyConditionInterpretation() : null);
+    const conditionsReady = interest.refusedForCutoff
+      ? stored.interpretation_ready
+      : condition.ready || interest.markConditionsReady;
+    const conditionChanged = !interest.refusedForCutoff &&
+      (condition.changed || (conditionsReady && !stored.interpretation_ready));
+    const finalInterpretation = interest.refusedForCutoff
+      ? current
+      : condition.interpretation ?? (interest.markConditionsReady ? emptyConditionInterpretation() : null);
     const parsedCondition = finalInterpretation
       ? ConditionInterpretationSchema.safeParse(finalInterpretation)
       : null;

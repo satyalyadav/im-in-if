@@ -90,6 +90,10 @@ async function makeOuting(agent: Agent, suggestion = "Dinner Friday?") {
   return (response.body.outing as { id: string }).id;
 }
 
+function futureIso(daysAhead = 14): string {
+  return new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString();
+}
+
 async function savedMessages(outingId: string) {
   return db.query<{
     id: string;
@@ -1253,7 +1257,7 @@ describe("conversation interest", () => {
       `insert into outing_options
         (id, outing_id, created_by_user_id, title, activity, starts_at,
          estimated_cost_cents, activity_tags, source)
-       values ($1, $2, $3, 'Confirmed option', 'Dinner', '2026-12-02T02:00:00Z',
+       values ($1, $2, $3, 'Confirmed option', 'Dinner', '${futureIso()}',
                1200, '["dinner"]', 'manual')`,
       [optionId, outingId, STARTER],
     );
@@ -1261,8 +1265,8 @@ describe("conversation interest", () => {
       `insert into proposals
         (id, outing_id, revision, created_by_user_id, option_id, activity, starts_at,
          estimated_cost_cents, attendee_user_ids, status, kind, published_at, expires_at, confirmed_at)
-       values ($1, $2, 1, $3, $4, 'Dinner', '2026-12-02T02:00:00Z', 1200,
-               $5::jsonb, 'confirmed', 'initial', now(), '2026-12-02T02:00:00Z', now())`,
+       values ($1, $2, 1, $3, $4, 'Dinner', '${futureIso()}', 1200,
+               $5::jsonb, 'confirmed', 'initial', now(), '${futureIso()}', now())`,
       [crypto.randomUUID(), outingId, STARTER, optionId, JSON.stringify([STARTER])],
     );
 
@@ -1297,7 +1301,7 @@ describe("conversation interest", () => {
       `insert into outing_options
         (id, outing_id, created_by_user_id, title, activity, starts_at,
          estimated_cost_cents, activity_tags, source)
-       values ($1, $2, $3, 'Published option', 'Dinner', '2026-12-02T02:00:00Z',
+       values ($1, $2, $3, 'Published option', 'Dinner', '${futureIso()}',
                1200, '["dinner"]', 'manual')`,
       [optionId, outingId, STARTER],
     );
@@ -1305,8 +1309,8 @@ describe("conversation interest", () => {
       `insert into proposals
         (id, outing_id, revision, created_by_user_id, option_id, activity, starts_at,
          estimated_cost_cents, attendee_user_ids, status, kind, published_at, expires_at)
-       values ($1, $2, 1, $3, $4, 'Dinner', '2026-12-02T02:00:00Z', 1200,
-               $5::jsonb, 'published', 'initial', now(), '2026-12-02T02:00:00Z')`,
+       values ($1, $2, 1, $3, $4, 'Dinner', '${futureIso()}', 1200,
+               $5::jsonb, 'published', 'initial', now(), '${futureIso()}')`,
       [proposalId, outingId, STARTER, optionId, JSON.stringify([OTHER])],
     );
 
@@ -1399,6 +1403,7 @@ describe("conversation interest", () => {
     const agent = new FakeAgent(() => ({
       text: "I've noted that you're not interested.",
       interestUpdate: "not_interested",
+      conditionUpdate: agentConditions({ maxCostCents: 3000 }),
     }));
     const outingId = await makeOuting(agent);
     await db.query(
@@ -1414,6 +1419,7 @@ describe("conversation interest", () => {
     expect(sent.status).toBe(200);
     await expect(participantState(outingId, STARTER)).resolves.toMatchObject({
       status: "interested",
+      version: 0,
     });
     const reply = (sent.body.messages as Array<{ content: string }>).at(-1)?.content ?? "";
     expect(reply).toContain("response cutoff has passed");
@@ -1472,7 +1478,7 @@ describe("conversation interest", () => {
       `insert into outing_options
         (id, outing_id, created_by_user_id, title, activity, starts_at,
          estimated_cost_cents, activity_tags, source)
-       values ($1, $2, $3, 'Pending option', 'Dinner', '2026-12-02T02:00:00Z',
+       values ($1, $2, $3, 'Pending option', 'Dinner', '${futureIso()}',
                1200, '["dinner"]', 'manual')`,
       [optionId, outingId, STARTER],
     );
@@ -1480,8 +1486,8 @@ describe("conversation interest", () => {
       `insert into proposals
         (id, outing_id, revision, created_by_user_id, option_id, activity, starts_at,
          estimated_cost_cents, attendee_user_ids, status, kind, published_at, expires_at)
-       values ($1, $2, 1, $3, $4, 'Dinner', '2026-12-02T02:00:00Z', 1200,
-               $5::jsonb, 'published', 'initial', now(), '2026-12-02T02:00:00Z')`,
+       values ($1, $2, 1, $3, $4, 'Dinner', '${futureIso()}', 1200,
+               $5::jsonb, 'published', 'initial', now(), '${futureIso()}')`,
       [proposalId, outingId, STARTER, optionId, JSON.stringify([STARTER])],
     );
 
@@ -1510,6 +1516,15 @@ describe("conversation interest", () => {
       : { text: "Let's plan it." });
     const outingId = await makeOuting(agent);
     await addParticipant(outingId, OTHER, "Other");
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I'm in.",
+    });
+    const starterMessage = (await savedMessages(outingId)).find((message) => message.role === "user");
+    expect(starterMessage).toBeTruthy();
+
+    const deniedRetry = await retryMessage(ctx(agent, OTHER), outingId, starterMessage!.id);
+    expect(deniedRetry.status).toBe(404);
 
     const sent = await sendMessage(ctx(agent, OTHER), outingId, {
       clientMessageId: crypto.randomUUID(),
@@ -1524,6 +1539,6 @@ describe("conversation interest", () => {
       status: "interested",
     });
     const messages = await savedMessages(outingId);
-    expect(messages).toHaveLength(2);
+    expect(messages).toHaveLength(4);
   });
 });
