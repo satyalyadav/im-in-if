@@ -61,7 +61,7 @@ export function prepareConversationInterest(input: Input): ConversationInterestR
   if (input.cutoffPassed || input.currentStatus === "no_response") {
     return {
       interest: null,
-      text: appendMissing(input.text, "The response cutoff has passed, so I haven't changed your interest."),
+      text: "The response cutoff has passed, so I haven't changed your interest.",
       markConditionsReady: false,
     };
   }

@@ -328,10 +328,10 @@ async function generateReply(
     const interestChanged = interest.interest !== null &&
       interest.interest !== sessions[0].response_status;
     const replyText = interestChanged && interest.interest === "interested" &&
-      !/recorded your interest|you're in|you are in/i.test(interest.text)
+      !/I've recorded your interest/i.test(interest.text)
       ? `${interest.text.trim()} I've recorded your interest.`
       : interestChanged && interest.interest === "not_interested" &&
-          !/not interested|noted|you're out|you are out/i.test(interest.text)
+          !/I've noted that you're not interested/i.test(interest.text)
         ? `${interest.text.trim()} I've noted that you're not interested.`
         : interest.text;
     const conditionsReady = condition.ready || interest.markConditionsReady;
@@ -423,18 +423,9 @@ async function generateReply(
          update participants p
             set response_status = $7, responded_at = now()
           where p.outing_id = $1 and p.user_id = $3 and p.admission_status = 'admitted'
-            and $6::boolean and p.response_status = $8 and p.response_status <> 'no_response'
+            and $6::boolean
+            and exists (select 1 from interest_guard)
             and exists (select 1 from condition_turn)
-            and not exists (
-              select 1 from outings o
-               where o.id = $1
-                 and (o.cutoff_processed_at is not null
-                   or (o.cutoff_at is not null and o.cutoff_at <= now()))
-            )
-            and not exists (
-              select 1 from proposals p2 where p2.outing_id = $1 and p2.status = 'confirmed'
-                and p2.attendee_user_ids @> jsonb_build_array($3::text)
-            )
             and not exists (
               select 1 from messages m where m.reply_to_message_id = $2 and m.owner_user_id = $3
             )

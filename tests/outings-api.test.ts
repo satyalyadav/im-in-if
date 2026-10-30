@@ -77,9 +77,12 @@ function ctx(agent: Agent, userId = STARTER): AgentContext {
 }
 
 async function makeOuting(agent: Agent, suggestion = "Dinner Friday?") {
+  const cutoffDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
   const response = await createOuting(ctx(agent), {
     suggestion,
-    cutoffDate: "2026-10-31",
+    cutoffDate,
     cutoffTime: "19:30",
     cutoffTimeZone: "America/Phoenix",
   });
@@ -1394,8 +1397,9 @@ describe("conversation interest", () => {
     await expect(participantState(outingId, STARTER)).resolves.toMatchObject({
       status: "interested",
     });
-    expect((sent.body.messages as Array<{ content: string }>).at(-1)?.content)
-      .toContain("response cutoff has passed");
+    const reply = (sent.body.messages as Array<{ content: string }>).at(-1)?.content ?? "";
+    expect(reply).toContain("response cutoff has passed");
+    expect(reply).not.toContain("noted that you're not interested");
   });
 
   it("records interest corrections through later messages", async () => {
