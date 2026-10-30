@@ -2,6 +2,12 @@
 
 This record summarizes checks performed on 2026-10-25 and 2026-10-26. Deployment and service settings below are dated observations. Consult the [build plan](../build-plan.md) for setup and the [product brief](../product-brief.md) for requirements. Original browser traces and provider responses were local run artifacts and are not included in this repository.
 
+## Optional-cutoff chat and email invitation checks
+
+On 2026-10-29, the source for issues [#16](https://github.com/satyalyadav/im-in-if/issues/16) and [#18](https://github.com/satyalyadav/im-in-if/issues/18) passed local checks: `npm test -- --maxWorkers=1` (120 tests across 9 files), `npm run typecheck`, and `AUTH_MODE=local npm run build`. The PGlite integration tests use stubbed network responses; they did not call a live model or email provider.
+
+The checks cover starting a saved chat turn without a cutoff, reusing its idempotency key without duplicate outings or messages, leaving pending invitees and outings unchanged when no cutoff exists, and accepting an email invitation only for an account with the intended verified address. Email delivery and acceptance are independent, and the message reports provider acceptance without claiming delivery. Local auth synthesizes a test email from its user ID; these checks do not establish Clerk verified-email behavior. No cross-account browser flow or real Resend delivery was performed for these issues.
+
 ## Repeatable demo recipe
 
 Use three separate synthetic sign-in accounts on the deployed Clerk development instance. The app's current Go configuration is DeepSeek only. Before making agent requests, check that the existing OpenCode Go subscription has included usage left and that Extra Usage is disabled. Stop when included usage is exhausted. Do not buy credits, upgrade, or enable Extra Usage.

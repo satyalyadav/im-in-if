@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatViewerDateTime, formatZonedDateTime } from "@/lib/cutoff";
 import { OutingChat } from "@/components/outing-chat";
+import { EmailInvitationForm } from "@/components/email-invitation-form";
 import type { MessageView, OutingView } from "@/lib/outings-api";
 import {
   type CatalogOption,
@@ -525,6 +526,9 @@ export function OutingWorkspace({ initialWorkspace }: { initialWorkspace: Worksp
             }}>Copy invitation link</button>
             <p className="hint dark-hint">The link only requests admission. The starter decides who can see the outing.</p>
           </div>
+        ) : null}
+        {workspace.outing.isStarter && !workspace.outing.endedAt ? (
+          <EmailInvitationForm outingId={workspace.outing.id} />
         ) : null}
         {workspace.outing.isStarter && workspace.pendingAdmissions.length > 0 ? (
           <section className="admission-list" aria-labelledby="admission-title">

@@ -8,6 +8,19 @@ type OutboxRow = {
   event_type: "admission" | "final_approval";
 };
 
+type InvitationDeliveryRow = {
+  id: string;
+  outing_id: string;
+  recipient_email: string;
+  invite_token: string;
+  send_request_id: string;
+};
+
+export type InvitationDeliveryStatus = {
+  status: "pending" | "sending" | "sent" | "failed" | "disabled";
+  errorCode: string | null;
+};
+
 export type EmailDispatchResult = {
   sent: number;
   failed: number;
@@ -16,6 +29,28 @@ export type EmailDispatchResult = {
 
 const IDEMPOTENCY_RETRY_WINDOW_MS = 23 * 60 * 60 * 1000;
 const STALE_SEND_MS = 2 * 60 * 1000;
+
+async function deliverWithResend(
+  input: { to: string; subject: string; text: string; idempotencyKey: string },
+  apiKey: string,
+  from: string,
+): Promise<Response> {
+  return fetch("https://api.resend.com/emails", {
+    method: "POST",
+    signal: AbortSignal.timeout(10_000),
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+      "idempotency-key": input.idempotencyKey,
+    },
+    body: JSON.stringify({
+      from,
+      to: [input.to],
+      subject: input.subject,
+      text: input.text,
+    }),
+  });
+}
 
 export async function dispatchOutbox(
   db: Db,
@@ -96,21 +131,12 @@ export async function dispatchOutbox(
       row.event_type === "admission" ? "A planning update is ready" : "Your plan is confirmed";
     const text = `A planning update is ready. Sign in to view it: ${returnUrl}`;
     try {
-      const response = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        signal: AbortSignal.timeout(10_000),
-        headers: {
-          authorization: `Bearer ${apiKey}`,
-          "content-type": "application/json",
-          "idempotency-key": row.id,
-        },
-        body: JSON.stringify({
-          from,
-          to: [row.recipient_email],
-          subject,
-          text,
-        }),
-      });
+      const response = await deliverWithResend({
+        to: row.recipient_email,
+        subject,
+        text,
+        idempotencyKey: row.id,
+      }, apiKey, from);
       if (!response.ok) {
         await markFailed(db, row.id, `provider_http_${response.status}`);
         failed += 1;
@@ -138,6 +164,115 @@ export async function dispatchOutbox(
   }
 
   return { sent, failed, unconfigured: false };
+}
+
+export async function dispatchEmailInvitation(
+  db: Db,
+  invitationId: string,
+  now = new Date(),
+): Promise<InvitationDeliveryStatus> {
+  const baseUrl = getSafeBaseUrl(process.env.APP_BASE_URL);
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM;
+  if (process.env.AUTH_MODE === "local" || !apiKey || !from || !baseUrl) {
+    const disabledCode = process.env.AUTH_MODE === "local"
+      ? "email_disabled_local_mode"
+      : !apiKey || !from
+        ? "email_unconfigured"
+        : "email_invalid_base_url";
+    await db.query(
+      `update email_invitations set status = 'disabled', error_code = $2
+        where id = $1 and status in ('pending', 'failed')`,
+      [invitationId, disabledCode],
+    );
+    return getInvitationDeliveryStatus(db, invitationId);
+  }
+
+  const timestamp = now.toISOString();
+  const timedOut = await db.query<{ id: string }>(
+    `update email_invitations set status = 'failed', error_code = 'delivery_unknown'
+      where id = $1 and status in ('pending', 'failed', 'sending')
+        and first_attempted_at <= $2::timestamptz - interval '23 hours'
+      returning id`,
+    [invitationId, timestamp],
+  );
+  if (timedOut.length) return getInvitationDeliveryStatus(db, invitationId);
+
+  await db.query(
+    `update email_invitations set status = 'failed', error_code = 'retry_limit'
+      where id = $1 and attempt_count >= 3
+        and (status in ('pending', 'failed', 'disabled') or
+             (status = 'sending' and attempted_at <= $2::timestamptz - interval '2 minutes'))`,
+    [invitationId, timestamp],
+  );
+  const claimed = await db.query<InvitationDeliveryRow>(
+    `update email_invitations i
+        set status = 'sending', attempted_at = $2::timestamptz,
+            first_attempted_at = coalesce(first_attempted_at, $2::timestamptz),
+            attempt_count = attempt_count + 1, error_code = null
+      where i.id = $1
+        and (i.status in ('pending', 'failed', 'disabled') or
+             (i.status = 'sending' and i.attempted_at <= $2::timestamptz - interval '2 minutes'))
+        and i.attempt_count < 3
+        and (i.first_attempted_at is null or
+             i.first_attempted_at > $2::timestamptz - interval '23 hours')
+        and exists (
+          select 1 from outings o where o.id = i.outing_id and o.ended_at is null
+        )
+      returning i.id, i.outing_id, i.recipient_email, i.invite_token, i.send_request_id`,
+    [invitationId, timestamp],
+  );
+  const row = claimed[0];
+  if (!row) return getInvitationDeliveryStatus(db, invitationId);
+
+  const invitationUrl = new URL(
+    `/email-invite/${encodeURIComponent(row.invite_token)}`,
+    baseUrl,
+  ).toString();
+  try {
+    const response = await deliverWithResend({
+      to: row.recipient_email,
+      subject: "You are invited to a private outing",
+      text: `You have an invitation to join a private outing. Sign in with this email address to accept: ${invitationUrl}`,
+      idempotencyKey: row.send_request_id,
+    }, apiKey, from);
+    if (!response.ok) {
+      await markInvitationFailed(db, row.id, `provider_http_${response.status}`);
+      return getInvitationDeliveryStatus(db, row.id);
+    }
+    await db.query(
+      `update email_invitations i set status = 'sent', sent_at = $2::timestamptz
+        where i.id = $1 and i.status = 'sending'
+          and i.first_attempted_at > $2::timestamptz - interval '23 hours'
+          and exists (
+            select 1 from outings o where o.id = i.outing_id
+              and (o.ended_at is null or o.ended_at + interval '7 days' > $2::timestamptz)
+          )`,
+      [row.id, timestamp],
+    );
+  } catch {
+    await markInvitationFailed(db, row.id, "provider_request_failed");
+  }
+  return getInvitationDeliveryStatus(db, row.id);
+}
+
+async function markInvitationFailed(db: Db, invitationId: string, code: string): Promise<void> {
+  await db.query(
+    `update email_invitations set status = 'failed', error_code = $2
+      where id = $1 and status = 'sending'`,
+    [invitationId, code],
+  );
+}
+
+async function getInvitationDeliveryStatus(
+  db: Db,
+  invitationId: string,
+): Promise<InvitationDeliveryStatus> {
+  const rows = await db.query<InvitationDeliveryStatus>(
+    `select status, error_code as "errorCode" from email_invitations where id = $1`,
+    [invitationId],
+  );
+  return rows[0] ?? { status: "failed", errorCode: "not_found" };
 }
 
 function getSafeBaseUrl(value: string | undefined): string | null {
