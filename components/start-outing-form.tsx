@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const REQUEST_STORAGE_KEY = "im-in-if:new-outing-request";
@@ -17,12 +17,19 @@ function requestIdFor(): string {
   }
 }
 
+function forgetRequestId() {
+  try {
+    sessionStorage.removeItem(REQUEST_STORAGE_KEY);
+  } catch {}
+}
+
 export function StartOutingForm() {
   const router = useRouter();
   const inputId = useId();
   const [suggestion, setSuggestion] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const requestId = useRef<string | null>(null);
 
   async function start(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -31,24 +38,27 @@ export function StartOutingForm() {
 
     setSubmitting(true);
     setError(null);
+    requestId.current ??= requestIdFor();
     try {
       const response = await fetch("/api/outings", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ suggestion: content, requestId: requestIdFor() }),
+        body: JSON.stringify({ suggestion: content, requestId: requestId.current }),
       });
       const data = (await response.json().catch(() => null)) as
         | { outing?: { id: string }; error?: string }
         | null;
 
       if (data?.outing?.id) {
-        sessionStorage.removeItem(REQUEST_STORAGE_KEY);
+        forgetRequestId();
+        requestId.current = null;
         router.push(`/outings/${data.outing.id}`);
         return;
       }
 
       if (data?.error === "idempotency_conflict") {
-        sessionStorage.removeItem(REQUEST_STORAGE_KEY);
+        forgetRequestId();
+        requestId.current = null;
         setError("This request was already used for a different idea. Submit again to start a new chat.");
       } else {
         setError("The chat could not be started. Check your idea and try again.");
