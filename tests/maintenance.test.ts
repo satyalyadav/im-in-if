@@ -30,6 +30,38 @@ async function newOuting(userId: string) {
   return (result.body.outing as { id: string }).id;
 }
 
+describe("optional response cutoffs", () => {
+  it("leaves unanswered people pending and the outing active when no cutoff exists", async () => {
+    const created = await createOuting({ db, userId: "no-cutoff-starter" }, {
+      suggestion: "Coffee sometime",
+      requestId: crypto.randomUUID(),
+    });
+    expect(created.status).toBe(201);
+    const outing = created.body.outing as { id: string; cutoffAt: string | null };
+    expect(outing.cutoffAt).toBeNull();
+    await db.query(
+      `insert into participants
+        (outing_id, user_id, display_name, admission_status, response_status, agent_session_id)
+       values ($1, 'no-cutoff-guest', 'Guest', 'admitted', 'pending', 'ses_no_cutoff_guest')`,
+      [outing.id],
+    );
+
+    await sweepDueWork(db, new Date("2027-01-01T00:00:00.000Z"));
+
+    const state = await db.query<{
+      status: string;
+      ended_at: string | Date | null;
+      cutoff_processed_at: string | Date | null;
+    }>(`select status, ended_at, cutoff_processed_at from outings where id = $1`, [outing.id]);
+    const guest = await db.query<{ response_status: string }>(
+      `select response_status from participants where outing_id = $1 and user_id = 'no-cutoff-guest'`,
+      [outing.id],
+    );
+    expect(state[0]).toMatchObject({ status: "planning", ended_at: null, cutoff_processed_at: null });
+    expect(guest[0].response_status).toBe("pending");
+  });
+});
+
 async function confirmBeforeCutoff(starterUserId: string, nonresponderUserId: string) {
   const created = await createOuting({ db, userId: starterUserId }, {
     suggestion: "Synthetic early confirmation",

@@ -10,7 +10,9 @@ export function OutingList({ outings }: { outings: OutingView[] }) {
           <li key={outing.id}>
             <Link href={`/outings/${outing.id}`}>
               <span className="recent-title">{outing.suggestion}</span>
-              <span className="recent-meta">cutoff {outing.cutoffDisplay}</span>
+              <span className="recent-meta">
+                {outing.cutoffDisplay ? `Replies stop ${outing.cutoffDisplay}` : "No response cutoff"}
+              </span>
             </Link>
           </li>
         ))}

@@ -185,6 +185,7 @@ a {
 }
 
 .field input,
+.field textarea,
 .field select,
 .local-form input {
   width: 100%;
@@ -204,12 +205,15 @@ a {
 }
 
 .field .idea-input {
+  display: block;
   font-family: var(--serif);
   font-size: 1.5rem;
   line-height: 1.25;
+  resize: vertical;
 }
 
 .field input:focus-visible,
+.field textarea:focus-visible,
 .field select:focus-visible,
 .local-form input:focus-visible {
   border-bottom-color: var(--ink);
@@ -222,6 +226,13 @@ a {
   color: #687b6e;
   font-size: 0.82rem;
   line-height: 1.4;
+}
+
+.start-outing-copy {
+  margin: -10px 0 18px;
+  max-width: 40ch;
+  color: #5d7264;
+  font-size: 0.92rem;
 }
 
 .cutoff {
@@ -519,6 +530,15 @@ a {
   margin: 8px 0 0;
   color: var(--muted-on-dark);
   font-size: 0.85rem;
+}
+
+.no-cutoff-note {
+  margin: 0;
+  padding: 14px 0;
+  border-top: 1px dashed rgba(232, 238, 227, 0.25);
+  border-bottom: 1px dashed rgba(232, 238, 227, 0.25);
+  color: #c8d6cc;
+  font-size: 0.88rem;
 }
 
 .privacy-note {
@@ -1071,11 +1091,78 @@ a {
 }
 
 .invite-link-card,
+.email-invitation-card,
 .participant-summary,
 .admission-list {
   margin-top: 22px;
   padding: 14px 0;
   border-top: 1px dashed rgba(232, 238, 227, 0.25);
+}
+
+.email-invitation-card h2 {
+  margin: 0 0 8px;
+  color: var(--screen);
+  font-family: var(--serif);
+  font-size: 1.35rem;
+  font-weight: 480;
+}
+
+.invite-help {
+  margin: 0 0 12px;
+  color: #9eb1a4;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.email-invitation-form label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted-on-dark);
+  font-size: 0.8rem;
+}
+
+.email-invitation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.email-invitation-row input {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(232, 238, 227, 0.3);
+  background: var(--house-soft);
+  color: var(--screen);
+  font: inherit;
+}
+
+.email-invitation-row .button {
+  padding: 7px 11px;
+}
+
+.email-invitation-list {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.email-invitation-list li {
+  display: grid;
+  gap: 2px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(232, 238, 227, 0.12);
+  color: #d1ddd4;
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.email-invitation-list small {
+  color: #94a99b;
+  font-size: 0.75rem;
+  line-height: 1.4;
 }
 
 .invite-link-card label,
@@ -1258,6 +1345,10 @@ a {
 
   .composer {
     flex-direction: column;
+  }
+
+  .email-invitation-row {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -20,6 +20,7 @@ export type OwnerContext = {
   db: Db;
   userId: string;
   verifiedEmails?: string[];
+  displayName?: string | null;
 };
 
 export type AgentContext = OwnerContext & {
@@ -35,8 +36,8 @@ type OutingRow = {
   id: string;
   starter_user_id: string;
   suggestion: string;
-  cutoff_at: string | Date;
-  cutoff_time_zone: string;
+  cutoff_at: string | Date | null;
+  cutoff_time_zone: string | null;
   invite_token: string | null;
   status: string;
   cutoff_processed_at: string | Date | null;
@@ -55,6 +56,7 @@ type MessageRow = {
   reply_to_message_id: string | null;
   status: "pending" | "replied" | "failed" | "complete";
   error_code: string | null;
+  processing_started_at?: string | Date | null;
   created_at: string | Date;
   completed_at: string | Date | null;
 };
@@ -62,9 +64,9 @@ type MessageRow = {
 export type OutingView = {
   id: string;
   suggestion: string;
-  cutoffAt: string;
-  cutoffTimeZone: string;
-  cutoffDisplay: string;
+  cutoffAt: string | null;
+  cutoffTimeZone: string | null;
+  cutoffDisplay: string | null;
   inviteToken: string | null;
   status: string;
   cutoffProcessedAt: string | null;
@@ -83,15 +85,25 @@ export type MessageView = {
   createdAt: string;
 };
 
-const createOutingSchema = z.object({
-  suggestion: z.string().trim().min(1).max(400),
-  cutoffDate: z.string().min(1).max(32),
-  cutoffTime: z.string().min(1).max(16),
-  cutoffTimeZone: z.string().min(1).max(64),
-});
-
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const createOutingSchema = z.object({
+  suggestion: z.string().trim().min(1).max(400),
+  requestId: z.string().regex(UUID_PATTERN).optional(),
+  cutoffDate: z.string().min(1).max(32).optional(),
+  cutoffTime: z.string().min(1).max(16).optional(),
+  cutoffTimeZone: z.string().min(1).max(64).optional(),
+}).superRefine((value, context) => {
+  const cutoffFields = [value.cutoffDate, value.cutoffTime, value.cutoffTimeZone];
+  const cutoffFieldCount = cutoffFields.filter(Boolean).length;
+  if (cutoffFieldCount !== 0 && cutoffFieldCount !== cutoffFields.length) {
+    context.addIssue({ code: "custom", message: "provide all response cutoff fields together" });
+  }
+  if (cutoffFieldCount === 0 && !value.requestId) {
+    context.addIssue({ code: "custom", message: "requestId is required without a response cutoff" });
+  }
+});
 
 const sendMessageSchema = z.object({
   clientMessageId: z.string().regex(UUID_PATTERN),
@@ -110,9 +122,12 @@ function toOutingView(row: OutingRow, viewerId: string): OutingView {
   return {
     id: row.id,
     suggestion: row.suggestion,
-    cutoffAt: iso(row.cutoff_at),
+    cutoffAt: row.cutoff_at ? iso(row.cutoff_at) : null,
     cutoffTimeZone: row.cutoff_time_zone,
-    cutoffDisplay: formatZonedDateTime(new Date(row.cutoff_at), row.cutoff_time_zone),
+    cutoffDisplay:
+      row.cutoff_at && row.cutoff_time_zone
+        ? formatZonedDateTime(new Date(row.cutoff_at), row.cutoff_time_zone)
+        : null,
     inviteToken: row.starter_user_id === viewerId ? row.invite_token : null,
     status: row.status,
     cutoffProcessedAt: row.cutoff_processed_at ? iso(row.cutoff_processed_at) : null,
@@ -194,6 +209,36 @@ async function generateReply(
   userMessage: MessageRow,
   successStatus: number,
 ): Promise<ApiResponse> {
+  const claimLeaseMs = Math.max(120_000, (context.agent.requestTimeoutMs ?? 60_000) + 60_000);
+  const claimed = await context.db.query<MessageRow>(
+    `update messages set status = 'pending', error_code = null, processing_started_at = now()
+      where id = $1 and outing_id = $2 and owner_user_id = $3 and role = 'user'
+        and status in ('pending', 'failed')
+        and (processing_started_at is null or processing_started_at <= now() - ($4::double precision * interval '1 millisecond'))
+        and not exists (select 1 from messages where reply_to_message_id = $1)
+      returning *`,
+    [userMessage.id, outing.id, context.userId, claimLeaseMs],
+  );
+  if (!claimed.length) {
+    const existingReply = await context.db.query<{ id: string }>(
+      `select id from messages where reply_to_message_id = $1 and owner_user_id = $2`,
+      [userMessage.id, context.userId],
+    );
+    if (existingReply.length) {
+      return {
+        status: successStatus,
+        body: {
+          messageId: userMessage.id,
+          messages: await listOwnMessages(context.db, outing.id, context.userId),
+        },
+      };
+    }
+    return {
+      status: 202,
+      body: { messageId: userMessage.id, status: "pending" },
+    };
+  }
+  userMessage = claimed[0];
   const history = await loadHistory(context.db, outing.id, context.userId, userMessage);
 
   try {
@@ -245,7 +290,7 @@ async function generateReply(
     const agentReply = await context.agent.reply({
       outing: {
         suggestion: outing.suggestion,
-        cutoffAt: iso(outing.cutoff_at),
+        cutoffAt: outing.cutoff_at ? iso(outing.cutoff_at) : null,
         cutoffTimeZone: outing.cutoff_time_zone,
       },
       history,
@@ -328,8 +373,9 @@ async function generateReply(
          select $6, o.id, $3, 'agent', $7, $2, 'complete', now()
            from outing_guard o where exists (select 1 from valid_turn)
          on conflict do nothing returning id
-       ), marked_user as (
-         update messages set status = 'replied', error_code = null, completed_at = now()
+      ), marked_user as (
+         update messages set status = 'replied', error_code = null,
+           processing_started_at = null, completed_at = now()
           where id = $2 and status in ('pending', 'failed')
             and exists (select 1 from inserted_reply)
          returning id
@@ -387,6 +433,7 @@ async function generateReply(
       }
       await context.db.query(
         `update messages set status = 'failed', error_code = 'stale_reply'
+          , processing_started_at = null
           where id = $1 and status in ('pending', 'failed')
             and exists (select 1 from outings where id = $2 and ended_at is null)`,
         [userMessage.id, outing.id],
@@ -413,7 +460,7 @@ async function generateReply(
         ? "invalid_output"
         : "model_error";
     await context.db.query(
-      `update messages set status = 'failed', error_code = $2
+      `update messages set status = 'failed', error_code = $2, processing_started_at = null
         where id = $1 and status = 'pending'
           and exists (select 1 from outings where id = $3 and ended_at is null)`,
       [userMessage.id, code, outing.id],
@@ -437,8 +484,9 @@ async function generateReply(
 }
 
 export async function createOuting(
-  context: OwnerContext,
+  context: OwnerContext & { agent?: Agent },
   input: unknown,
+  providedAgent?: Agent,
 ): Promise<ApiResponse> {
   const parsed = createOutingSchema.safeParse(input);
   if (!parsed.success) {
@@ -448,48 +496,123 @@ export async function createOuting(
     };
   }
 
-  const cutoff = resolveCutoffInstant({
-    date: parsed.data.cutoffDate,
-    time: parsed.data.cutoffTime,
-    timeZone: parsed.data.cutoffTimeZone,
-  });
-  if (!cutoff.ok) {
-    return { status: 400, body: { error: cutoff.error } };
+  let cutoffAt: string | null = null;
+  let cutoffTimeZone: string | null = null;
+  if (parsed.data.cutoffDate && parsed.data.cutoffTime && parsed.data.cutoffTimeZone) {
+    const cutoff = resolveCutoffInstant({
+      date: parsed.data.cutoffDate,
+      time: parsed.data.cutoffTime,
+      timeZone: parsed.data.cutoffTimeZone,
+    });
+    if (!cutoff.ok) {
+      return { status: 400, body: { error: cutoff.error } };
+    }
+    cutoffAt = cutoff.instant.toISOString();
+    cutoffTimeZone = parsed.data.cutoffTimeZone;
   }
 
   const outingId = crypto.randomUUID();
   const inviteToken = crypto.randomUUID();
   const sessionId = `ses_${crypto.randomUUID()}`;
-  const result = await context.db.transaction<OutingRow>([
-    {
-      text: `insert into outings
-        (id, starter_user_id, suggestion, cutoff_at, cutoff_time_zone, invite_token)
-       values ($1, $2, $3, $4, $5, $6) returning *`,
-      params: [
-        outingId,
-        context.userId,
-        parsed.data.suggestion,
-        cutoff.instant.toISOString(),
-        parsed.data.cutoffTimeZone,
-        inviteToken,
-      ],
-    },
-    {
-      text: `insert into participants
-        (outing_id, user_id, display_name, admission_status, response_status, responded_at, agent_session_id)
-       values ($1, $2, 'Starter', 'admitted', 'interested', now(), $3)`,
-      params: [outingId, context.userId, sessionId],
-    },
-    {
-      text: `insert into participant_preferences (outing_id, user_id)
-       values ($1, $2)`,
-      params: [outingId, context.userId],
-    },
-  ]);
+  const requestId = parsed.data.requestId?.toLowerCase() ?? null;
+  const created = requestId
+    ? await context.db.transaction<OutingRow>([
+        {
+          text: `insert into outings
+            (id, starter_user_id, suggestion, cutoff_at, cutoff_time_zone, invite_token, creation_request_id)
+           values ($1, $2, $3, $4, $5, $6, $7)
+           on conflict (starter_user_id, creation_request_id) where creation_request_id is not null
+           do nothing returning *`,
+          params: [outingId, context.userId, parsed.data.suggestion, cutoffAt, cutoffTimeZone, inviteToken, requestId],
+        },
+        {
+          text: `insert into participants
+            (outing_id, user_id, display_name, admission_status, response_status, responded_at, agent_session_id)
+           select $1, $2, 'Starter', 'admitted', 'interested', now(), $3
+             from outings where id = $1
+           on conflict (outing_id, user_id) do nothing`,
+          params: [outingId, context.userId, sessionId],
+        },
+        {
+          text: `insert into participant_preferences (outing_id, user_id)
+           select $1, $2 from outings where id = $1
+           on conflict (outing_id, user_id) do nothing`,
+          params: [outingId, context.userId],
+        },
+        {
+          text: `insert into messages
+            (id, outing_id, owner_user_id, role, content, client_message_id, status)
+           select $1, $2, $3, 'user', $4, $5, 'pending'
+             from outings where id = $2
+           on conflict do nothing returning *`,
+          params: [crypto.randomUUID(), outingId, context.userId, parsed.data.suggestion, requestId],
+        },
+      ])
+    : await context.db.transaction<OutingRow>([
+        {
+          text: `insert into outings
+            (id, starter_user_id, suggestion, cutoff_at, cutoff_time_zone, invite_token)
+           values ($1, $2, $3, $4, $5, $6) returning *`,
+          params: [outingId, context.userId, parsed.data.suggestion, cutoffAt, cutoffTimeZone, inviteToken],
+        },
+        {
+          text: `insert into participants
+            (outing_id, user_id, display_name, admission_status, response_status, responded_at, agent_session_id)
+           values ($1, $2, 'Starter', 'admitted', 'interested', now(), $3)`,
+          params: [outingId, context.userId, sessionId],
+        },
+        {
+          text: `insert into participant_preferences (outing_id, user_id)
+           values ($1, $2)`,
+          params: [outingId, context.userId],
+        },
+      ]);
+
+  let outing = created[0]?.[0];
+  if (!outing && requestId) {
+    outing = (await context.db.query<OutingRow>(
+      `select * from outings where starter_user_id = $1 and creation_request_id = $2`,
+      [context.userId, requestId],
+    ))[0];
+  }
+  if (!outing) return { status: 409, body: { error: "idempotency_conflict" } };
+  const sameRequest = outing.suggestion === parsed.data.suggestion &&
+    (outing.cutoff_at ? new Date(outing.cutoff_at).getTime() : null) ===
+      (cutoffAt ? new Date(cutoffAt).getTime() : null) &&
+    outing.cutoff_time_zone === cutoffTimeZone;
+  if (!sameRequest) return { status: 409, body: { error: "idempotency_conflict" } };
+
+  const view = toOutingView(outing, context.userId);
+  if (!requestId) return { status: 201, body: { outing: view } };
+
+  const initialMessages = await context.db.query<MessageRow>(
+    `select * from messages
+      where outing_id = $1 and owner_user_id = $2 and client_message_id = $3`,
+    [outing.id, context.userId, requestId],
+  );
+  const initialMessage = initialMessages[0];
+  if (!initialMessage) return { status: 500, body: { error: "initial_message_missing" } };
+
+  const agent = providedAgent ?? context.agent;
+  if (agent && (
+    initialMessage.status === "pending" ||
+    (created[0]?.[0] && initialMessage.status === "failed")
+  )) {
+    await generateReply({ ...context, agent }, outing, initialMessage, 200);
+  } else if (!agent && initialMessage.status === "pending" && !initialMessage.processing_started_at) {
+    await context.db.query(
+      `update messages set status = 'failed', error_code = 'unavailable'
+        where id = $1 and status = 'pending' and processing_started_at is null`,
+      [initialMessage.id],
+    );
+  }
 
   return {
-    status: 201,
-    body: { outing: toOutingView(result[0][0], context.userId) },
+    status: created[0]?.[0] ? 201 : 200,
+    body: {
+      outing: view,
+      messages: await listOwnMessages(context.db, outing.id, context.userId),
+    },
   };
 }
 

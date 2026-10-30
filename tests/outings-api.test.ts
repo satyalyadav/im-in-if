@@ -129,13 +129,47 @@ describe("starting an outing", () => {
     });
   });
 
-  it("refuses to invent a cutoff when none was supplied", async () => {
-    const response = await createOuting(ctx(new FakeAgent()), {
-      suggestion: "Dinner Friday?",
+  it("creates one saved private chat turn without requiring a cutoff", async () => {
+    const agent = new FakeAgent();
+    const input = {
+      suggestion: "Maybe dinner Friday?",
+      requestId: crypto.randomUUID(),
+    };
+
+    const first = await createOuting(ctx(agent), input);
+    expect(first.status).toBe(201);
+    expect(first.body.outing).toMatchObject({
+      suggestion: "Maybe dinner Friday?",
+      cutoffAt: null,
+      cutoffTimeZone: null,
+      cutoffDisplay: null,
+    });
+    expect(first.body.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "user", content: "Maybe dinner Friday?" }),
+      expect.objectContaining({ role: "agent", content: "Here is a workable first step." }),
+    ]));
+    expect(agent.calls[0]?.outing).toEqual({
+      suggestion: "Maybe dinner Friday?",
+      cutoffAt: null,
+      cutoffTimeZone: null,
     });
 
-    expect(response.status).toBe(400);
-    await expect(db.query("select id from outings")).resolves.toHaveLength(0);
+    const outingId = (first.body.outing as { id: string }).id;
+    const repeated = await createOuting(ctx(agent), input);
+    expect(repeated.status).toBe(200);
+    expect((repeated.body.outing as { id: string }).id).toBe(outingId);
+    expect(await db.query("select id from outings")).toHaveLength(1);
+    expect(await savedMessages(outingId)).toHaveLength(2);
+    expect(agent.calls).toHaveLength(1);
+
+    const reused = await createOuting(ctx(agent), {
+      ...input,
+      suggestion: "Different idea",
+    });
+    expect(reused.status).toBe(409);
+    expect(reused.body.error).toBe("idempotency_conflict");
+    expect(await db.query("select id from outings")).toHaveLength(1);
+    expect(await savedMessages(outingId)).toHaveLength(2);
   });
 
   it("rejects a cutoff time skipped by a daylight saving transition", async () => {
@@ -537,6 +571,31 @@ describe("private agent turns", () => {
     expect(preference[0].conditions_version).toBe(1);
   });
 
+  it("labels availability timestamps when an outing has no time zone", async () => {
+    const agent = new FakeAgent((input) => ({
+      text: "Let's find a plan.",
+      conditionUpdate: agentConditions({
+        availableWindows: input.currentConditions ? [] : [{
+          startsAt: "2026-10-30T02:00:00.000Z",
+          endsAt: "2026-10-30T04:00:00.000Z",
+        }],
+      }),
+    }));
+    const created = await createOuting(ctx(agent), {
+      suggestion: "I am only available during these saved times for dinner.",
+      requestId: crypto.randomUUID(),
+    }, agent);
+    const outingId = (created.body.outing as { id: string }).id;
+    const reply = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Maybe a movie instead.",
+    });
+    expect(reply.status).toBe(200);
+    const text = (reply.body.messages as Array<{ content: string }>).at(-1)?.content;
+    expect(text).toContain("UTC");
+    expect(text).toContain("your local time zone is not set");
+  });
+
   it("asks before weakening a hard limit and requires confirmation for direct corrections", async () => {
     const agent = new FakeAgent((input) => {
       const latest = input.history.at(-1)?.content ?? "";
@@ -832,6 +891,33 @@ describe("private agent turns", () => {
     await expect(savedMessages(outingId)).resolves.toHaveLength(2);
   });
 
+  it("does not take over a reply before its configured request timeout", async () => {
+    const outingId = await makeOuting(new FakeAgent());
+    let release!: (reply: AgentReply) => void;
+    const slow = Object.assign(
+      new FakeAgent(() => new Promise<AgentReply>((resolve) => { release = resolve; })),
+      { requestTimeoutMs: 300_000 },
+    );
+    const inFlight = sendMessage(ctx(slow), outingId, {
+      clientMessageId: crypto.randomUUID(), content: "Dinner Friday?",
+    });
+    await waitFor(async () => slow.calls.length === 1);
+    const [pending] = await savedMessages(outingId);
+    await db.query(
+      `update messages set processing_started_at = now() - interval '3 minutes' where id = $1`,
+      [pending.id],
+    );
+    const retrying = Object.assign(new FakeAgent(() => "Duplicate call."), { requestTimeoutMs: 300_000 });
+    try {
+      const result = await retryMessage(ctx(retrying), outingId, pending.id);
+      expect(result.status).toBe(202);
+      expect(retrying.calls).toHaveLength(0);
+    } finally {
+      release({ text: "Original reply." });
+      await inFlight;
+    }
+  });
+
   it("recovers a turn that is stuck pending without duplicating the reply", async () => {
     const outingId = await makeOuting(new FakeAgent());
     let release!: (reply: AgentReply) => void;
@@ -854,6 +940,10 @@ describe("private agent turns", () => {
       pendingId = messages[0].id;
       return true;
     });
+    await db.query(
+      `update messages set processing_started_at = now() - interval '3 minutes' where id = $1`,
+      [pendingId],
+    );
 
     const recovered = await retryMessage(
       ctx(new FakeAgent(() => ({

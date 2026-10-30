@@ -29,8 +29,8 @@ type WorkspaceOutingRow = {
   id: string;
   starter_user_id: string;
   suggestion: string;
-  cutoff_at: string | Date;
-  cutoff_time_zone: string;
+  cutoff_at: string | Date | null;
+  cutoff_time_zone: string | null;
   invite_token: string | null;
   status: string;
   cutoff_processed_at: string | Date | null;
@@ -465,7 +465,7 @@ export async function getOutingWorkspace(
     outing: {
       id: outing.id,
       suggestion: outing.suggestion,
-      cutoffAt: new Date(outing.cutoff_at).toISOString(),
+      cutoffAt: outing.cutoff_at ? new Date(outing.cutoff_at).toISOString() : null,
       cutoffTimeZone: outing.cutoff_time_zone,
       inviteToken: starter ? outing.invite_token : null,
       status: outing.status,
@@ -824,7 +824,7 @@ async function setInterest(
   outing: LoadedOuting,
   interested: boolean,
 ): Promise<ApiResponse> {
-  if (outing.cutoff_processed_at || new Date(outing.cutoff_at) <= new Date()) {
+  if (outing.cutoff_processed_at || (outing.cutoff_at && new Date(outing.cutoff_at) <= new Date())) {
     return api(409, { error: "response_cutoff_passed" });
   }
   if (interested) {
@@ -1009,7 +1009,7 @@ async function generateOffer(
     const candidate = await agent.generateOffer({
       outing: {
         suggestion: outing.suggestion,
-        cutoffAt: new Date(outing.cutoff_at).toISOString(),
+        cutoffAt: outing.cutoff_at ? new Date(outing.cutoff_at).toISOString() : null,
         cutoffTimeZone: outing.cutoff_time_zone,
       },
       sessionId: own.agent_session_id,
@@ -1055,7 +1055,7 @@ async function generateOffer(
       : parsedResult.data as OfferCandidate;
     if (draftOption && (
       new Date(draftOption.startsAt) <= new Date() ||
-      new Date(draftOption.startsAt) <= new Date(outing.cutoff_at)
+      (outing.cutoff_at !== null && new Date(draftOption.startsAt) <= new Date(outing.cutoff_at))
     )) return api(409, { error: "offer_not_feasible", reason: "activity_time_invalid" });
     if (tieContext) {
       const selectedAttendees = [...validCandidate.attendeeUserIds].sort();

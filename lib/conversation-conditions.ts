@@ -31,7 +31,7 @@ type Input = {
   suggested: AgentConditionUpdate | null | undefined;
   participants: PublicParticipant[];
   conditionsLocked: boolean;
-  timeZone: string;
+  timeZone: string | null;
   text: string;
 };
 
@@ -142,22 +142,24 @@ function namesFor(ids: string[], participants: PublicParticipant[]): string {
   return names.join(", ");
 }
 
-function formatWindows(windows: Hard["availableWindows"], timeZone: string): string {
+function formatWindows(windows: Hard["availableWindows"], timeZone: string | null): string {
   if (windows.length === 0) return "no time restriction";
   let formatter: Intl.DateTimeFormat;
   try {
     formatter = new Intl.DateTimeFormat("en-US", {
-      weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone,
+      weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+      timeZone: timeZone ?? "UTC", timeZoneName: "short",
     });
   } catch {
     return windows.map((window) => `${window.startsAt} to ${window.endsAt}`).join("; ");
   }
-  return windows.map((window) =>
+  const formatted = windows.map((window) =>
     `${formatter.format(new Date(window.startsAt))} to ${formatter.format(new Date(window.endsAt))}`,
   ).join("; ");
+  return timeZone ? formatted : `${formatted} (your local time zone is not set)`;
 }
 
-function relaxationQuestion(change: Relaxation, participants: PublicParticipant[], timeZone: string): string {
+function relaxationQuestion(change: Relaxation, participants: PublicParticipant[], timeZone: string | null): string {
   switch (change.kind) {
     case "maxCost": {
       const next = change.after === null ? "no cap" : money(change.after);

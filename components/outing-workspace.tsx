@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { formatZonedDateTime } from "@/lib/cutoff";
+import { formatViewerDateTime, formatZonedDateTime } from "@/lib/cutoff";
 import { OutingChat } from "@/components/outing-chat";
+import { EmailInvitationForm } from "@/components/email-invitation-form";
 import type { MessageView, OutingView } from "@/lib/outings-api";
 import {
   type CatalogOption,
@@ -32,8 +33,8 @@ export type Workspace = {
   outing: {
     id: string;
     suggestion: string;
-    cutoffAt: string;
-    cutoffTimeZone: string;
+    cutoffAt: string | null;
+    cutoffTimeZone: string | null;
     inviteToken: string | null;
     status: string;
     cutoffProcessedAt: string | null;
@@ -117,8 +118,9 @@ function money(cents: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 }
 
-function dateTime(value: string, timeZone: string): string {
-  return formatZonedDateTime(new Date(value), timeZone);
+function dateTime(value: string, timeZone: string | null): string {
+  const instant = new Date(value);
+  return timeZone ? formatZonedDateTime(instant, timeZone) : formatViewerDateTime(instant);
 }
 
 function tagsFromText(value: string): string[] {
@@ -499,7 +501,9 @@ export function OutingWorkspace({ initialWorkspace }: { initialWorkspace: Worksp
 
   const outing: OutingView = {
     ...workspace.outing,
-    cutoffDisplay: formatZonedDateTime(new Date(workspace.outing.cutoffAt), workspace.outing.cutoffTimeZone),
+    cutoffDisplay: workspace.outing.cutoffAt && workspace.outing.cutoffTimeZone
+      ? formatZonedDateTime(new Date(workspace.outing.cutoffAt), workspace.outing.cutoffTimeZone)
+      : null,
   };
   const latestNotification = workspace.notifications[0];
 
@@ -522,6 +526,9 @@ export function OutingWorkspace({ initialWorkspace }: { initialWorkspace: Worksp
             }}>Copy invitation link</button>
             <p className="hint dark-hint">The link only requests admission. The starter decides who can see the outing.</p>
           </div>
+        ) : null}
+        {workspace.outing.isStarter && !workspace.outing.endedAt ? (
+          <EmailInvitationForm outingId={workspace.outing.id} />
         ) : null}
         {workspace.outing.isStarter && workspace.pendingAdmissions.length > 0 ? (
           <section className="admission-list" aria-labelledby="admission-title">
