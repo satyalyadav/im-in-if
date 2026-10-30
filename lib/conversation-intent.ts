@@ -9,7 +9,6 @@ export type ConversationInterestResult = {
 };
 
 type Input = {
-  ownerText: string;
   suggested: ConversationInterest | null | undefined;
   currentStatus: ParticipantResponseStatus;
   conditionsReady: boolean;
@@ -18,9 +17,6 @@ type Input = {
   cutoffPassed: boolean;
   text: string;
 };
-
-const QUESTION_START =
-  /^(?:what|which|when|where|who|whom|whose|why|how|is|are|was|were|can|could|do|does|did|would|should|shall|will|may|might|have|has)\b/i;
 
 function unchanged(input: Input): ConversationInterestResult {
   return {
@@ -36,16 +32,11 @@ function appendMissing(text: string, sentence: string): string {
   return `${text.trim()} ${sentence}`.trim();
 }
 
-function isQuestion(text: string): boolean {
-  const trimmed = text.trim();
-  return trimmed.endsWith("?") || QUESTION_START.test(trimmed);
-}
-
 /**
  * Validate an interest intention that the owner's agent already interpreted.
  * This function does not decide what a message means; it only blocks effects
- * the server cannot safely apply, such as questions, cutoff changes, or a
- * withdrawal from an already confirmed plan.
+ * the server cannot safely apply, such as cutoff changes or a withdrawal from
+ * an already confirmed plan.
  */
 export function prepareConversationInterest(input: Input): ConversationInterestResult {
   const suggested = input.suggested;
@@ -70,15 +61,7 @@ export function prepareConversationInterest(input: Input): ConversationInterestR
   if (input.cutoffPassed || input.currentStatus === "no_response") {
     return {
       interest: null,
-      text: "The response cutoff has passed, so I haven't changed your interest.",
-      markConditionsReady: false,
-    };
-  }
-
-  if (isQuestion(input.ownerText)) {
-    return {
-      interest: null,
-      text: appendMissing(input.text, "I haven't changed your interest."),
+      text: appendMissing(input.text, "The response cutoff has passed, so I haven't changed your interest."),
       markConditionsReady: false,
     };
   }

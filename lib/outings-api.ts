@@ -316,7 +316,6 @@ async function generateReply(
       text: agentReply.text,
     });
     const interest = prepareConversationInterest({
-      ownerText: history.at(-1)?.content ?? "",
       suggested: agentReply.interestUpdate,
       currentStatus: sessions[0].response_status,
       conditionsReady: condition.ready,
@@ -328,11 +327,13 @@ async function generateReply(
     });
     const interestChanged = interest.interest !== null &&
       interest.interest !== sessions[0].response_status;
-    const replyText = interest.interest === "interested" &&
-      condition.text !== agentReply.text &&
-      !/recorded your interest/i.test(interest.text)
+    const replyText = interestChanged && interest.interest === "interested" &&
+      !/recorded your interest|you're in|you are in/i.test(interest.text)
       ? `${interest.text.trim()} I've recorded your interest.`
-      : interest.text;
+      : interestChanged && interest.interest === "not_interested" &&
+          !/not interested|noted|you're out|you are out/i.test(interest.text)
+        ? `${interest.text.trim()} I've noted that you're not interested.`
+        : interest.text;
     const conditionsReady = condition.ready || interest.markConditionsReady;
     const conditionChanged = condition.changed ||
       (conditionsReady && !stored.interpretation_ready);
@@ -352,7 +353,8 @@ async function generateReply(
       marked_user_count: number | string;
     }>(
       `with outing_guard as materialized (
-         select id from outings where id = $1 and ended_at is null for update
+         select id, cutoff_processed_at, cutoff_at from outings
+          where id = $1 and ended_at is null for update
        ), message_guard as materialized (
          select id, seq from messages
           where id = $2 and outing_id = $1 and owner_user_id = $3 and role = 'user'
@@ -364,6 +366,27 @@ async function generateReply(
            join outing_guard o on o.id = pref.outing_id
           where pref.user_id = $3
           for update
+       ), interest_guard as materialized (
+         select p.user_id
+           from participants p
+          where p.outing_id = $1 and p.user_id = $3 and p.admission_status = 'admitted'
+            and (
+              not $6::boolean
+              or (
+                p.response_status = $8 and p.response_status <> 'no_response'
+                and exists (
+                  select 1 from outing_guard o
+                   where o.id = p.outing_id
+                     and o.cutoff_processed_at is null
+                     and (o.cutoff_at is null or o.cutoff_at > now())
+                )
+                and not exists (
+                  select 1 from proposals p2 where p2.outing_id = $1 and p2.status = 'confirmed'
+                    and p2.attendee_user_ids @> jsonb_build_array($3::text)
+                )
+              )
+            )
+          for update of p
        ), condition_write as (
          update participant_preferences pref
             set interpretation = $11::jsonb,
@@ -373,6 +396,7 @@ async function generateReply(
            where pref.outing_id = $1 and pref.user_id = $3
              and pref.conditions_version = $4 and $5::boolean
              and exists (select 1 from preference_guard)
+             and exists (select 1 from interest_guard)
              and exists (select 1 from message_guard)
              and not exists (
                select 1 from proposals p where p.outing_id = $1 and p.status = 'confirmed'
@@ -386,6 +410,7 @@ async function generateReply(
          select pref.outing_id, pref.user_id
            from preference_guard pref
           where pref.conditions_version = $4 and not $5::boolean
+            and exists (select 1 from interest_guard)
             and exists (select 1 from message_guard)
             and not exists (
               select 1 from messages m where m.reply_to_message_id = $2 and m.owner_user_id = $3

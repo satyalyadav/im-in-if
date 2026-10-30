@@ -1143,7 +1143,7 @@ describe("conversation interest", () => {
 
   it("leaves interest unchanged when the owner asks about options", async () => {
     const agent = new FakeAgent((input) => input.history.at(-1)?.content === "What time works?"
-      ? { text: "A few times could work. What are you considering?", interestUpdate: "interested" }
+      ? { text: "A few times could work. What are you considering?", interestUpdate: null }
       : { text: "Let's plan it." });
     const outingId = await makeOuting(agent);
     await addParticipant(outingId, OTHER, "Other");
@@ -1351,35 +1351,157 @@ describe("conversation interest", () => {
       version: 1,
     });
 
-    const duplicateInput = { clientMessageId: crypto.randomUUID(), content: "I'm in if it's under $30." };
+    await db.query(
+      `update participants set response_status = 'not_interested', responded_at = now()
+        where outing_id = $1 and user_id = $2`,
+      [outingId, STARTER],
+    );
+    const callsBeforeDuplicate = working.calls.length;
+    const messagesBeforeDuplicate = (await savedMessages(outingId)).length;
+    const duplicateInput = { clientMessageId: crypto.randomUUID(), content: "Count me in." };
     const [first, second] = await Promise.all([
       sendMessage(ctx(working), outingId, duplicateInput),
       sendMessage(ctx(working), outingId, duplicateInput),
     ]);
     expect([first.status, second.status].every((status) => status < 300)).toBe(true);
-    await expect(savedMessages(outingId)).resolves.toHaveLength(4);
+    expect(working.calls).toHaveLength(callsBeforeDuplicate + 1);
+    const messagesAfterDuplicate = await savedMessages(outingId);
+    expect(messagesAfterDuplicate).toHaveLength(messagesBeforeDuplicate + 2);
+    expect(messagesAfterDuplicate.filter((message) => message.role === "agent")).toHaveLength(2);
     await expect(participantState(outingId, STARTER)).resolves.toMatchObject({
       status: "interested",
       version: 1,
     });
   });
 
-  it("does not let another signed-in account change the owner's interest", async () => {
-    const agent = new FakeAgent((input) => input.history.at(-1)?.content === "I'm out."
-      ? { text: "Noted.", interestUpdate: "not_interested" }
-      : { text: "Let's plan it." });
+  it("does not change interest after the response cutoff", async () => {
+    const agent = new FakeAgent(() => ({
+      text: "I've noted that you're not interested.",
+      interestUpdate: "not_interested",
+    }));
     const outingId = await makeOuting(agent);
+    await db.query(
+      `update outings set cutoff_at = now() - interval '1 minute' where id = $1`,
+      [outingId],
+    );
 
-    const denied = await sendMessage(ctx(agent, OTHER), outingId, {
+    const sent = await sendMessage(ctx(agent), outingId, {
       clientMessageId: crypto.randomUUID(),
       content: "I'm out.",
     });
 
-    expect(denied.status).toBe(404);
+    expect(sent.status).toBe(200);
+    await expect(participantState(outingId, STARTER)).resolves.toMatchObject({
+      status: "interested",
+    });
+    expect((sent.body.messages as Array<{ content: string }>).at(-1)?.content)
+      .toContain("response cutoff has passed");
+  });
+
+  it("records interest corrections through later messages", async () => {
+    const agent = new FakeAgent((input) => input.history.at(-1)?.content === "I'm out."
+      ? { text: "I've noted that you're not interested.", interestUpdate: "not_interested" }
+      : { text: "You're in.", interestUpdate: "interested" });
+    const outingId = await makeOuting(agent);
+
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I'm out.",
+    });
+    await expect(participantState(outingId, STARTER)).resolves.toMatchObject({
+      status: "not_interested",
+    });
+
+    const corrected = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I'm back in.",
+    });
+
+    expect(corrected.status).toBe(200);
+    await expect(participantState(outingId, STARTER)).resolves.toMatchObject({
+      status: "interested",
+      version: 1,
+    });
+  });
+
+  it("does not save conditions when the interest write loses a race", async () => {
+    let outingId = "";
+    const agent = new FakeAgent(async () => {
+      await db.query(
+        `update participants set response_status = 'pending', responded_at = now()
+          where outing_id = $1 and user_id = $2`,
+        [outingId, STARTER],
+      );
+      return {
+        text: "You're in if it stays under $30.",
+        interestUpdate: "interested",
+        conditionUpdate: agentConditions({ maxCostCents: 3000 }),
+      };
+    });
+    outingId = await makeOuting(agent);
+    await db.query(
+      `update participants set response_status = 'not_interested', responded_at = now()
+        where outing_id = $1 and user_id = $2`,
+      [outingId, STARTER],
+    );
+    const optionId = crypto.randomUUID();
+    const proposalId = crypto.randomUUID();
+    await db.query(
+      `insert into outing_options
+        (id, outing_id, created_by_user_id, title, activity, starts_at,
+         estimated_cost_cents, activity_tags, source)
+       values ($1, $2, $3, 'Pending option', 'Dinner', '2026-12-02T02:00:00Z',
+               1200, '["dinner"]', 'manual')`,
+      [optionId, outingId, STARTER],
+    );
+    await db.query(
+      `insert into proposals
+        (id, outing_id, revision, created_by_user_id, option_id, activity, starts_at,
+         estimated_cost_cents, attendee_user_ids, status, kind, published_at, expires_at)
+       values ($1, $2, 1, $3, $4, 'Dinner', '2026-12-02T02:00:00Z', 1200,
+               $5::jsonb, 'published', 'initial', now(), '2026-12-02T02:00:00Z')`,
+      [proposalId, outingId, STARTER, optionId, JSON.stringify([STARTER])],
+    );
+
+    const sent = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I'm in if it's under $30.",
+    });
+
+    expect(sent.status).toBe(409);
+    expect(sent.body.error).toBe("stale_reply");
+    await expect(participantState(outingId, STARTER)).resolves.toMatchObject({
+      status: "pending",
+      version: 0,
+    });
+    const proposal = await db.query<{ status: string }>(
+      `select status from proposals where id = $1`, [proposalId],
+    );
+    expect(proposal[0]?.status).toBe("published");
+    const messages = await savedMessages(outingId);
+    expect(messages).toHaveLength(1);
+  });
+
+  it("does not let another admitted participant change the owner's interest", async () => {
+    const agent = new FakeAgent((input) => input.history.at(-1)?.content === "I'm out."
+      ? { text: "Noted.", interestUpdate: "not_interested" }
+      : { text: "Let's plan it." });
+    const outingId = await makeOuting(agent);
+    await addParticipant(outingId, OTHER, "Other");
+
+    const sent = await sendMessage(ctx(agent, OTHER), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I'm out.",
+    });
+
+    expect(sent.status).toBe(200);
+    await expect(participantState(outingId, OTHER)).resolves.toMatchObject({
+      status: "not_interested",
+    });
     await expect(participantState(outingId, STARTER)).resolves.toMatchObject({
       status: "interested",
     });
     const messages = await savedMessages(outingId);
-    expect(messages).toHaveLength(0);
+    expect(messages).toHaveLength(2);
   });
 });

@@ -3,7 +3,6 @@ import { prepareConversationInterest } from "@/lib/conversation-intent";
 
 function intent(overrides: Partial<Parameters<typeof prepareConversationInterest>[0]> = {}) {
   return prepareConversationInterest({
-    ownerText: "I'm in.",
     suggested: "interested",
     currentStatus: "pending",
     conditionsReady: false,
@@ -24,14 +23,16 @@ describe("conversation interest", () => {
     });
   });
 
-  it("does not treat a question about options as interest", () => {
-    expect(intent({ ownerText: "What time works?" })).toMatchObject({
+  it("leaves interest unchanged when the agent returns no suggestion for a question", () => {
+    expect(intent({ suggested: null, text: "A few times could work." })).toEqual({
       interest: null,
+      text: "A few times could work.",
+      markConditionsReady: false,
     });
   });
 
   it("records a clear conditional interest and marks empty conditions ready", () => {
-    expect(intent({ ownerText: "I'm in if it's under $30." })).toEqual({
+    expect(intent({ suggested: "interested" })).toEqual({
       interest: "interested",
       text: "You're in.",
       markConditionsReady: true,
@@ -40,7 +41,6 @@ describe("conversation interest", () => {
 
   it("refuses interest while a focused condition question is open", () => {
     expect(intent({
-      ownerText: "I'm in if it's cheap.",
       clarifyingQuestions: ["Is that a strict cap or a preference?"],
     })).toEqual({
       interest: null,
@@ -51,7 +51,6 @@ describe("conversation interest", () => {
 
   it("records clear disinterest without requiring conditions", () => {
     expect(intent({
-      ownerText: "I'm out.",
       suggested: "not_interested",
       currentStatus: "interested",
     })).toEqual({
@@ -63,7 +62,6 @@ describe("conversation interest", () => {
 
   it("does not toggle interest for a confirmed attendee", () => {
     const result = intent({
-      ownerText: "I'm out.",
       suggested: "not_interested",
       currentStatus: "interested",
       confirmedAttendee: true,
@@ -74,7 +72,6 @@ describe("conversation interest", () => {
 
   it("does not change interest after the response cutoff", () => {
     const result = intent({
-      ownerText: "I'm out.",
       suggested: "not_interested",
       currentStatus: "interested",
       cutoffPassed: true,
