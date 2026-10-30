@@ -48,12 +48,19 @@ export type AgentOutingContext = {
   cutoffTimeZone: string | null;
 };
 
+export type ParticipantResponseStatus =
+  | "pending"
+  | "interested"
+  | "not_interested"
+  | "no_response";
+
 export type AgentTurnInput = {
   outing: AgentOutingContext;
   history: Array<{ role: "user" | "agent"; content: string }>;
   currentConditions: ConditionInterpretation | null;
   conditionsReady: boolean;
   conditionsLocked: boolean;
+  responseStatus: ParticipantResponseStatus;
   participants: PublicParticipant[];
   sessionId?: string;
 };
@@ -80,6 +87,7 @@ export type AgentConditionUpdate = z.infer<typeof AgentConditionUpdateSchema>;
 
 const AgentReplySchema = z.object({
   text: z.string().trim().min(1).max(12_000),
+  interestUpdate: z.enum(["interested", "not_interested"]).nullable(),
   conditionUpdate: AgentConditionUpdateSchema.nullable(),
 }).strict();
 
@@ -95,6 +103,7 @@ const PrivatePlanOfferToolSchema = z.object({
 
 export type AgentReply = {
   text: string;
+  interestUpdate?: "interested" | "not_interested" | null;
   conditionUpdate?: AgentConditionUpdate | null;
 };
 
@@ -202,6 +211,11 @@ function systemPrompt(input: AgentTurnInput): string {
     "Gather and maintain only your owner's conditions in this private conversation.",
     "Use only the owner's messages, the current condition state below, and the admitted public roster below.",
     "Call private_plan_reply exactly once on every turn, including clarifications and turns with no condition changes. Put the concise natural-language reply in text and the complete current condition state in conditionUpdate, or null only when this message adds or corrects no condition.",
+    "Set interestUpdate to 'interested' or 'not_interested' only when the owner's latest message is a clear first-person statement that records or withdraws interest in this outing. Conditional interest such as 'I am in if it is under $30' records both interest and the condition in the same turn. A question about options, a maybe, a thanks, or a statement about someone else's plans must leave interestUpdate null.",
+    "Interest is not approval, attendance, or confirmation, and a condition update alone is not interest. Never say interest was recorded unless interestUpdate carries it. Never approve a proposal from an interest statement.",
+    "If you ask a clarifying question about a condition, leave interestUpdate null and say the interest is not recorded yet.",
+    "When the owner's message answers a pending question that followed their conditional interest, and their saved response is not already interested, set interestUpdate to 'interested'.",
+    "When the owner is on the confirmed plan, do not change interest. Explain that a confirmed plan change goes through the existing request to leave the roster. When the response cutoff has passed, do not change interest.",
     "When returning a condition update, include every field and copy unchanged values from the current saved state. Keep empty list fields as empty lists and keep a missing spending cap as null.",
     "Preserve every saved hard condition across turns. Never weaken or remove one unless the owner explicitly asks for that change. A generic thanks, off-topic message, or answer that does not resolve the question must not change conditions or count as confirmation.",
     "Treat only limits the owner states as required as hard. Put ordinary likes and tradeoffs in flexiblePreferences.",
@@ -210,6 +224,7 @@ function systemPrompt(input: AgentTurnInput): string {
     "A condition update is not interest, attendance, agreement, or approval. Never claim anyone agreed or commit for your owner.",
     `Current condition state, with attendance dependencies shown as names: ${JSON.stringify(promptConditions(input))}`,
     `Current conditions are ${input.conditionsReady ? "ready" : "not yet ready"}.`,
+    `The owner's saved interest response is ${JSON.stringify(input.responseStatus)}.`,
     `The owner has ${input.conditionsLocked ? "confirmed a plan, so conditions are locked" : "not confirmed a plan with locked conditions"}.`,
     `Admitted people: ${JSON.stringify(input.participants.map((participant) => participant.displayName))}`,
     "Keep replies concise and plain. Use no Markdown headings or asterisks.",
@@ -498,7 +513,7 @@ function createAgent(options: ProviderOptions): Agent {
           })),
           tools: {
             private_plan_reply: tool({
-              description: "Return the private natural-language reply and the complete current condition state, or null when unchanged.",
+              description: "Return the private natural-language reply, any validated interest change, and the complete current condition state.",
               inputSchema: AgentReplySchema,
             }),
           },

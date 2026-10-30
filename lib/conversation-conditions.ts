@@ -428,5 +428,11 @@ export function prepareConversationConditionUpdate(input: Input): ConversationCo
   const ready = safeCandidate.clarifyingQuestions.length === 0 &&
     (stateChanged || input.currentReady || noConditionsExplicitly(ownerText));
   if (!stateChanged && ready === input.currentReady) return noChange(input);
-  return { text: input.text, interpretation: safeCandidate, ready, changed: true };
+  const question = safeCandidate.clarifyingQuestions[0];
+  return {
+    text: question ? appendQuestion(input.text, question) : input.text,
+    interpretation: safeCandidate,
+    ready,
+    changed: true,
+  };
 }
