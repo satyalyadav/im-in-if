@@ -52,3 +52,12 @@ export async function getVerifiedAccountEmails(userId: string): Promise<string[]
     .filter((address) => address.verification?.status === "verified")
     .map((address) => address.emailAddress.trim().toLowerCase());
 }
+
+export async function getAccountDisplayName(userId: string): Promise<string | null> {
+  if (isLocalAuth()) return userId;
+
+  const user = await currentUser();
+  if (!user || user.id !== userId) return null;
+  const name = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
+  return (name || user.username?.trim() || "").slice(0, 64) || null;
+}

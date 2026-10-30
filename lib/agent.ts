@@ -176,6 +176,7 @@ function normalizeOfferToolReply(
 }
 
 export interface Agent {
+  readonly requestTimeoutMs?: number;
   reply(input: AgentTurnInput): Promise<AgentReply>;
   generateOffer?(input: OfferGenerationInput): Promise<OfferGenerationResult>;
 }
@@ -485,6 +486,7 @@ function createAgent(options: ProviderOptions): Agent {
   }
 
   return {
+    requestTimeoutMs: config.timeoutMs,
     async reply(input) {
       try {
         const result = await generateText({

@@ -195,6 +195,27 @@ async function loadInvitation(db: Db, invitationId: string): Promise<EmailInvita
   return rows[0] ?? null;
 }
 
+export async function getEmailInvitationStatus(
+  context: OwnerContext,
+  token: string,
+): Promise<ApiResponse> {
+  const verifiedEmails = [...new Set((context.verifiedEmails ?? []).map(normalizeEmail).filter(Boolean))];
+  if (verifiedEmails.length === 0) return api(403, { error: "verified_email_required" });
+  const rows = await context.db.query<{ outing_id: string; accepted_by_user_id: string | null }>(
+    `select i.outing_id, i.accepted_by_user_id
+       from email_invitations i join outings o on o.id = i.outing_id
+      where i.invite_token = $1 and i.normalized_recipient_email = any($2::text[])
+        and o.ended_at is null
+        and (i.accepted_by_user_id is null or i.accepted_by_user_id = $3)`,
+    [token, verifiedEmails, context.userId],
+  );
+  const invitation = rows[0];
+  if (!invitation) return api(404, { error: "not_found" });
+  return invitation.accepted_by_user_id
+    ? api(200, { status: "admitted", outingId: invitation.outing_id })
+    : api(200, { status: "ready" });
+}
+
 export async function acceptEmailInvitation(
   context: OwnerContext,
   token: string,
@@ -207,6 +228,9 @@ export async function acceptEmailInvitation(
     [token],
   );
   if (references[0]) await processOutingDeadlines(context.db, references[0].outing_id);
+
+  const displayName = context.displayName?.trim().slice(0, 64) ||
+    `Guest ${crypto.randomUUID().slice(0, 8)}`;
 
   const accepted = await context.db.query<{ outing_id: string }>(
     `with invitation as materialized (
@@ -221,7 +245,7 @@ export async function acceptEmailInvitation(
      ), participant as (
        insert into participants
          (outing_id, user_id, display_name, admission_status, response_status, agent_session_id)
-       select outing_id, $3, 'Email invitee', 'admitted', 'pending', $4 from invitation
+       select outing_id, $3, $5, 'admitted', 'pending', $4 from invitation
        on conflict (outing_id, user_id) do update
          set admission_status = 'admitted'
        returning outing_id
@@ -239,7 +263,7 @@ export async function acceptEmailInvitation(
        returning i.outing_id
      )
      select outing_id from accepted_invitation`,
-    [token, verifiedEmails, context.userId, "ses_" + crypto.randomUUID()],
+    [token, verifiedEmails, context.userId, "ses_" + crypto.randomUUID(), displayName],
   );
   if (!accepted.length) return api(404, { error: "not_found" });
   return api(200, { status: "admitted", outingId: accepted[0].outing_id });

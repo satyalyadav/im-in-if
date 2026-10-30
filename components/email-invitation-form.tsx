@@ -21,6 +21,9 @@ function statusText(invitation: Invitation): string {
   if (invitation.errorCode === "delivery_unknown") {
     return "Delivery is unknown. This request will not be sent again.";
   }
+  if (invitation.errorCode === "provider_request_failed") {
+    return "The send result is unknown. The email may still arrive.";
+  }
   if (invitation.errorCode === "retry_limit") return "The send retry limit was reached.";
   return "The email provider did not accept the request. You can retry this request.";
 }
@@ -33,6 +36,7 @@ export function EmailInvitationForm({ outingId }: { outingId: string }) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [announcement, setAnnouncement] = useState("");
 
   useEffect(() => {
     let current = true;
@@ -85,6 +89,7 @@ export function EmailInvitationForm({ outingId }: { outingId: string }) {
         data.invitation!,
         ...current.filter((item) => item.id !== data.invitation!.id),
       ]);
+      setAnnouncement(`${data.invitation.recipientEmail}. ${statusText(data.invitation)}`);
       setEmail("");
       request.current = null;
     } catch {
@@ -117,6 +122,7 @@ export function EmailInvitationForm({ outingId }: { outingId: string }) {
           </button>
         </div>
       </form>
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</p>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       {loading ? <p className="hint">Loading invitation status.</p> : null}
       {invitations.length > 0 ? (
@@ -124,7 +130,7 @@ export function EmailInvitationForm({ outingId }: { outingId: string }) {
           {invitations.map((invitation) => (
             <li key={invitation.id}>
               <span>{invitation.recipientEmail}</span>
-              <small role="status">{statusText(invitation)}</small>
+              <small>{statusText(invitation)}</small>
             </li>
           ))}
         </ul>

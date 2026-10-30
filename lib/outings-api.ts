@@ -20,6 +20,7 @@ export type OwnerContext = {
   db: Db;
   userId: string;
   verifiedEmails?: string[];
+  displayName?: string | null;
 };
 
 export type AgentContext = OwnerContext & {
@@ -208,14 +209,15 @@ async function generateReply(
   userMessage: MessageRow,
   successStatus: number,
 ): Promise<ApiResponse> {
+  const claimLeaseMs = Math.max(120_000, (context.agent.requestTimeoutMs ?? 60_000) + 60_000);
   const claimed = await context.db.query<MessageRow>(
     `update messages set status = 'pending', error_code = null, processing_started_at = now()
       where id = $1 and outing_id = $2 and owner_user_id = $3 and role = 'user'
         and status in ('pending', 'failed')
-        and (processing_started_at is null or processing_started_at <= now() - interval '2 minutes')
+        and (processing_started_at is null or processing_started_at <= now() - ($4::double precision * interval '1 millisecond'))
         and not exists (select 1 from messages where reply_to_message_id = $1)
       returning *`,
-    [userMessage.id, outing.id, context.userId],
+    [userMessage.id, outing.id, context.userId, claimLeaseMs],
   );
   if (!claimed.length) {
     const existingReply = await context.db.query<{ id: string }>(
@@ -307,7 +309,7 @@ async function generateReply(
       suggested: agentReply.conditionUpdate,
       participants,
       conditionsLocked: lockedRows[0]?.locked ?? false,
-      timeZone: outing.cutoff_time_zone ?? "UTC",
+      timeZone: outing.cutoff_time_zone,
       text: agentReply.text,
     });
     const parsedCondition = condition.interpretation

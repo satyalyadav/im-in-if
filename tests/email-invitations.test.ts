@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acceptEmailInvitation,
   createEmailInvitation,
+  getEmailInvitationStatus,
   listEmailInvitations,
 } from "@/lib/email-invitations";
 import { createPgliteDb, migrate, type Db } from "@/lib/db";
@@ -39,6 +40,48 @@ afterEach(async () => {
 });
 
 describe("email invitations", () => {
+  it("checks an invitation without granting admission", async () => {
+    vi.stubEnv("AUTH_MODE", "local");
+    await createEmailInvitation({ db, userId: STARTER }, outingId, {
+      email: "friend@example.test", requestId: crypto.randomUUID(),
+    });
+    const [invitation] = await db.query<{ invite_token: string }>(
+      `select invite_token from email_invitations where outing_id = $1`, [outingId],
+    );
+    const recipient = { db, userId: "friend-account", verifiedEmails: ["friend@example.test"] };
+    expect(await getEmailInvitationStatus(recipient, invitation.invite_token))
+      .toEqual({ status: 200, body: { status: "ready" } });
+    expect((await getOutingWorkspace(recipient, outingId)).status).toBe(404);
+    expect((await acceptEmailInvitation(recipient, invitation.invite_token)).status).toBe(200);
+    expect(await getEmailInvitationStatus(recipient, invitation.invite_token))
+      .toEqual({ status: 200, body: { status: "admitted", outingId } });
+  });
+
+  it("uses each recipient's account display name in the public roster", async () => {
+    vi.stubEnv("AUTH_MODE", "local");
+    for (const [displayName, userId, email] of [
+      ["Sam Rivera", "sam-account", "sam@example.test"],
+      ["Alex Kim", "alex-account", "alex@example.test"],
+    ]) {
+      await createEmailInvitation({ db, userId: STARTER }, outingId, {
+        email, requestId: crypto.randomUUID(),
+      });
+      const [invitation] = await db.query<{ invite_token: string }>(
+        `select invite_token from email_invitations where outing_id = $1 and recipient_email = $2`,
+        [outingId, email],
+      );
+      const accepted = await acceptEmailInvitation({
+        db, userId, verifiedEmails: [email], displayName,
+      }, invitation.invite_token);
+      expect(accepted.status).toBe(200);
+    }
+    const workspace = await getOutingWorkspace({ db, userId: STARTER }, outingId);
+    expect(workspace.body.participants).toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId: "sam-account", displayName: "Sam Rivera" }),
+      expect.objectContaining({ userId: "alex-account", displayName: "Alex Kim" }),
+    ]));
+  });
+
   it("stores one recipient request and reuses its provider key on retries", async () => {
     const requestId = crypto.randomUUID();
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
@@ -157,7 +200,7 @@ describe("email invitations", () => {
     )).resolves.toHaveLength(1);
     const starterView = await getOutingWorkspace({ db, userId: STARTER }, outingId);
     expect(starterView.body.participants).toEqual(expect.arrayContaining([
-      expect.objectContaining({ userId: winner.userId, displayName: "Email invitee" }),
+      expect.objectContaining({ userId: winner.userId, displayName: expect.stringMatching(/^Guest [a-f0-9]{8}$/) }),
     ]));
     const status = await listEmailInvitations({ db, userId: STARTER }, outingId);
     expect(status.body.invitations).toEqual([

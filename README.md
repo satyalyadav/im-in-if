@@ -10,7 +10,7 @@ The intended flow gives each person a private chat with their own agent. Their a
 
 Start an outing by writing what you have in mind. You do not need to know the activity time or set a response cutoff.
 
-The starter can invite a friend by email. Only a signed-in account with the invited verified email address can join. Joining does not record interest or attendance.
+The starter can invite a friend by email. The recipient signs in with the invited verified email address and chooses Join planning group. Joining does not record interest or attendance.
 
 Read the [build plan](docs/build-plan.md) for setup and model-provider details. Check its included-usage limits and required Extra Usage setting before enabling agent calls. The [verification record](docs/verification/0001-private-agent-slice.md) describes checked behavior and data retention.
 
