@@ -1144,6 +1144,24 @@ describe("conversation interest", () => {
     expect(state.interpretation).toEqual(emptyConditionInterpretation());
   });
 
+  it("marks the starter's empty conditions ready when they confirm interest", async () => {
+    const agent = new FakeAgent(() => ({
+      text: "You're in. I'll look for something that fits.",
+      interestUpdate: "interested",
+    }));
+    const outingId = await makeOuting(agent);
+
+    const sent = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I'm in.",
+    });
+
+    expect(sent.status).toBe(200);
+    const state = await participantState(outingId, STARTER);
+    expect(state).toMatchObject({ status: "interested", ready: true, version: 1 });
+    expect(state.interpretation).toEqual(emptyConditionInterpretation());
+  });
+
   it("leaves interest unchanged when the owner asks about options", async () => {
     const agent = new FakeAgent((input) => input.history.at(-1)?.content === "What time works?"
       ? { text: "A few times could work. What are you considering?", interestUpdate: null }

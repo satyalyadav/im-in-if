@@ -41,7 +41,18 @@ function appendMissing(text: string, sentence: string): string {
 export function prepareConversationInterest(input: Input): ConversationInterestResult {
   const suggested = input.suggested;
   if (!suggested) return unchanged(input);
-  if (input.currentStatus === suggested) return unchanged(input);
+  if (input.currentStatus === suggested) {
+    if (
+      suggested === "interested" &&
+      !input.conditionsReady &&
+      !input.confirmedAttendee &&
+      !input.cutoffPassed &&
+      input.clarifyingQuestions.length === 0
+    ) {
+      return { interest: null, text: input.text, markConditionsReady: true };
+    }
+    return unchanged(input);
+  }
 
   if (input.confirmedAttendee) {
     if (suggested === "not_interested") {
