@@ -7,6 +7,7 @@ import {
   ACTIVE_GO_MODEL,
   createOpenCodeGoAgent,
   getSafeAgentFailureDiagnostic,
+  type AgentTurnInput,
   type OfferGenerationInput,
 } from "@/lib/agent";
 import { validateCandidate } from "@/lib/planning";
@@ -446,6 +447,44 @@ describe("OpenCode Go agent boundary", () => {
     expectForcedOfferRequest(captured[0]);
   });
 
+  it("does not present UTC catalog times as local when the outing has no time zone", async () => {
+    const options = [catalogOption(
+      "00000000-0000-4000-8000-000000000007",
+      "2026-10-28T03:00:00.000Z",
+      900,
+    )];
+    const { baseURL, captured } = await fakeGo((request, response, body) => {
+      respondIfOfferToolIsForced(request, response, body, toolCallCompletion([
+        call("offer-call-1", {
+          kind: "clarification",
+          optionId: null,
+          option: null,
+          attendeeUserIds: [],
+          counterOfferToId: null,
+          privateNote: "",
+          question: "Which time zone should I use?",
+        }, OFFER_TOOL_NAME),
+      ], goUsage()));
+    });
+    const provider = agent(baseURL);
+    if (!provider.generateOffer) throw new Error("offer generation is unavailable");
+
+    await expect(provider.generateOffer({
+      ...offerInput(options),
+      outing: { ...outing, cutoffAt: null, cutoffTimeZone: null },
+    })).resolves.toEqual({ kind: "clarification", question: "Which time zone should I use?" });
+    expect(captured).toHaveLength(1);
+    const messages = captured[0].body.messages as Array<{ role?: string; content?: unknown }>;
+    const prompt = String(messages.find((message) => message.role === "user")?.content ?? "");
+    const catalogLine = prompt.split("\n").find((line) => line.startsWith("Catalog options: "));
+    const supplied = JSON.parse(catalogLine?.slice("Catalog options: ".length) ?? "[]") as Array<Record<string, unknown>>;
+    expect(prompt).toContain("No outing time zone is set.");
+    expect(prompt).toContain("Do not treat an option's ISO timestamp as the owner's local time");
+    expect(supplied).toHaveLength(1);
+    expect(supplied[0]).not.toHaveProperty("startsAtLocal");
+    expect(supplied[0]).not.toHaveProperty("timeZone");
+  });
+
   it("drafts a relevant option from private details when the public catalog is empty", async () => {
     const { baseURL, captured } = await fakeGo((request, response, body) => {
       const messages = body.messages as Array<{ role?: string; content?: unknown }>;
@@ -635,6 +674,27 @@ describe("OpenCode Go agent boundary", () => {
     expect(prompt).not.toContain("additionalProperties");
     expect(prompt).not.toContain('"minimumGroupSize":{"type"');
     expect(prompt).toContain("copy unchanged values from the current saved state");
+  });
+
+  it("asks before interpreting dates when an outing has no cutoff or time zone", async () => {
+    const { baseURL, captured } = await fakeGo((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(toolCallCompletion([
+        call("call-1", { text: "What time zone should I use?", conditionUpdate: null }),
+      ], goUsage()));
+    });
+    const input: AgentTurnInput = {
+      ...turnInput(),
+      outing: { ...outing, cutoffAt: null, cutoffTimeZone: null },
+    };
+
+    await agent(baseURL).reply(input);
+
+    const messages = captured[0].body.messages as Array<{ role?: string; content?: unknown }>;
+    const prompt = String(messages.find((message) => message.role === "system")?.content ?? "");
+    expect(prompt).toContain("No response cutoff has been set.");
+    expect(prompt).toContain("If no outing time zone is set, ask for one");
+    expect(prompt).not.toContain("Invalid Date");
   });
 
   it("fails closed when mandatory condition fields have malformed types", async () => {

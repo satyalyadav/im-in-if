@@ -129,13 +129,47 @@ describe("starting an outing", () => {
     });
   });
 
-  it("refuses to invent a cutoff when none was supplied", async () => {
-    const response = await createOuting(ctx(new FakeAgent()), {
-      suggestion: "Dinner Friday?",
+  it("creates one saved private chat turn without requiring a cutoff", async () => {
+    const agent = new FakeAgent();
+    const input = {
+      suggestion: "Maybe dinner Friday?",
+      requestId: crypto.randomUUID(),
+    };
+
+    const first = await createOuting(ctx(agent), input);
+    expect(first.status).toBe(201);
+    expect(first.body.outing).toMatchObject({
+      suggestion: "Maybe dinner Friday?",
+      cutoffAt: null,
+      cutoffTimeZone: null,
+      cutoffDisplay: null,
+    });
+    expect(first.body.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "user", content: "Maybe dinner Friday?" }),
+      expect.objectContaining({ role: "agent", content: "Here is a workable first step." }),
+    ]));
+    expect(agent.calls[0]?.outing).toEqual({
+      suggestion: "Maybe dinner Friday?",
+      cutoffAt: null,
+      cutoffTimeZone: null,
     });
 
-    expect(response.status).toBe(400);
-    await expect(db.query("select id from outings")).resolves.toHaveLength(0);
+    const outingId = (first.body.outing as { id: string }).id;
+    const repeated = await createOuting(ctx(agent), input);
+    expect(repeated.status).toBe(200);
+    expect((repeated.body.outing as { id: string }).id).toBe(outingId);
+    expect(await db.query("select id from outings")).toHaveLength(1);
+    expect(await savedMessages(outingId)).toHaveLength(2);
+    expect(agent.calls).toHaveLength(1);
+
+    const reused = await createOuting(ctx(agent), {
+      ...input,
+      suggestion: "Different idea",
+    });
+    expect(reused.status).toBe(409);
+    expect(reused.body.error).toBe("idempotency_conflict");
+    expect(await db.query("select id from outings")).toHaveLength(1);
+    expect(await savedMessages(outingId)).toHaveLength(2);
   });
 
   it("rejects a cutoff time skipped by a daylight saving transition", async () => {
@@ -854,6 +888,10 @@ describe("private agent turns", () => {
       pendingId = messages[0].id;
       return true;
     });
+    await db.query(
+      `update messages set processing_started_at = now() - interval '3 minutes' where id = $1`,
+      [pendingId],
+    );
 
     const recovered = await retryMessage(
       ctx(new FakeAgent(() => ({

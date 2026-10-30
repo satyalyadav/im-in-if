@@ -28,8 +28,8 @@ export default async function HomePage() {
             <em>the plan exists.</em>
           </h1>
           <p className="lede">
-            A private agent for the idea you only half said out loud. Set the moment replies
-            stop counting, then work out the rest one message at a time.
+            A private agent for the idea you only half said out loud. Work out the details
+            one message at a time.
           </p>
           <p className="hero-note">
             For one movie night, dinner, or campus plan at a time. Your agent works for you,

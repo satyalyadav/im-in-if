@@ -44,8 +44,8 @@ export class AgentError extends Error {
 
 export type AgentOutingContext = {
   suggestion: string;
-  cutoffAt: string;
-  cutoffTimeZone: string;
+  cutoffAt: string | null;
+  cutoffTimeZone: string | null;
 };
 
 export type AgentTurnInput = {
@@ -190,22 +190,21 @@ export type OpenCodeGoAgentConfig = {
 export const ACTIVE_GO_MODEL = "deepseek-v4.1-flash";
 
 function systemPrompt(input: AgentTurnInput): string {
-  const cutoff = formatZonedDateTime(
-    new Date(input.outing.cutoffAt),
-    input.outing.cutoffTimeZone,
-  );
+  const cutoff = input.outing.cutoffAt && input.outing.cutoffTimeZone
+    ? formatZonedDateTime(new Date(input.outing.cutoffAt), input.outing.cutoffTimeZone)
+    : null;
 
   return [
     "You are one participant's private personal agent for one outing.",
     `The outing's initial suggestion: ${JSON.stringify(input.outing.suggestion)}`,
-    `Response cutoff: ${cutoff}.`,
+    cutoff ? `Response cutoff: ${cutoff}.` : "No response cutoff has been set.",
     "Gather and maintain only your owner's conditions in this private conversation.",
     "Use only the owner's messages, the current condition state below, and the admitted public roster below.",
     "Call private_plan_reply exactly once on every turn, including clarifications and turns with no condition changes. Put the concise natural-language reply in text and the complete current condition state in conditionUpdate, or null only when this message adds or corrects no condition.",
     "When returning a condition update, include every field and copy unchanged values from the current saved state. Keep empty list fields as empty lists and keep a missing spending cap as null.",
     "Preserve every saved hard condition across turns. Never weaken or remove one unless the owner explicitly asks for that change. A generic thanks, off-topic message, or answer that does not resolve the question must not change conditions or count as confirmation.",
     "Treat only limits the owner states as required as hard. Put ordinary likes and tradeoffs in flexiblePreferences.",
-    "Ask one focused question when the amount, date, time, strictness, or person is unclear. Do not guess missing dates or time zones. Use the outing time zone for relative times. Keep unresolved questions in clarifyingQuestions and leave the related condition unchanged.",
+    "Ask one focused question when the amount, date, time, strictness, or person is unclear. Do not guess missing dates or time zones. If no outing time zone is set, ask for one before interpreting relative dates or local clock times. Keep unresolved questions in clarifyingQuestions and leave the related condition unchanged.",
     "For attendance dependencies, use exact admitted display names from the roster. Ask who the owner means when a name is unknown or ambiguous. Never use the owner's own name as an attendance dependency.",
     "A condition update is not interest, attendance, agreement, or approval. Never claim anyone agreed or commit for your owner.",
     `Current condition state, with attendance dependencies shown as names: ${JSON.stringify(promptConditions(input))}`,
@@ -533,19 +532,25 @@ function createAgent(options: ProviderOptions): Agent {
         option.source !== "sample" &&
         optionMeetsHardOptionConditions(option, input.privateConditions.hard),
       );
+      const displayTimeZone = input.outing.cutoffTimeZone;
       const localizedOptions = compatibleOptions.map((option) => ({
         ...option,
-        startsAtLocal: formatZonedDateTime(
-          new Date(option.startsAt),
-          input.outing.cutoffTimeZone,
-        ),
-        timeZone: input.outing.cutoffTimeZone,
+        ...(displayTimeZone
+          ? {
+              startsAtLocal: formatZonedDateTime(new Date(option.startsAt), displayTimeZone),
+              timeZone: displayTimeZone,
+            }
+          : {}),
       }));
       const localizedOwnerWindows = input.privateConditions.hard.availableWindows.map((window) => ({
         ...window,
-        startsAtLocal: formatZonedDateTime(new Date(window.startsAt), input.outing.cutoffTimeZone),
-        endsAtLocal: formatZonedDateTime(new Date(window.endsAt), input.outing.cutoffTimeZone),
-        timeZone: input.outing.cutoffTimeZone,
+        ...(displayTimeZone
+          ? {
+              startsAtLocal: formatZonedDateTime(new Date(window.startsAt), displayTimeZone),
+              endsAtLocal: formatZonedDateTime(new Date(window.endsAt), displayTimeZone),
+              timeZone: displayTimeZone,
+            }
+          : {}),
       }));
       const prompt = [
         "Create one tentative plan offer for your owner. This is not a confirmation.",
@@ -554,8 +559,8 @@ function createAgent(options: ProviderOptions): Agent {
         "For a new choice, set kind='new_option', optionId=null, option to a new option object with title, activity, startsAt, estimatedCostCents, and activityTags, and question=null. For a clarification, set kind='clarification', optionId=null, option=null, attendeeUserIds=[], counterOfferToId=null, privateNote='', and ask one focused question.",
         "Use a supplied public catalog option only when its activity fits the outing suggestion and the owner's private input and preferences, as well as the hard conditions. Otherwise draft a relevant generic option or ask one focused clarification. Do not replace the suggested activity with an unrelated activity; for example, never offer a movie when the idea is sushi.",
         "Include your owner in attendeeUserIds. Use only participants whose responseStatus is interested. Do not change strict conditions. Other participants' conditions are checked after your answer, but their private details are not available to you.",
-        "Every supplied catalog option has already passed your owner's hard availability, budget, and activity-tag checks. Do not claim a supplied option violates those checks. Use its startsAtLocal and timeZone for plain-language time descriptions.",
-        "For a new option, use an owner-provided date and time or fit a dated window from Owner availability windows below. Return startsAt as an ISO instant in the outing time zone. The response cutoff is not the activity date. If the activity or date/time cannot be chosen from the supplied details without guessing, return one focused clarification instead of an option.",
+        `Every supplied catalog option has already passed your owner's hard availability, budget, and activity-tag checks. Do not claim a supplied option violates those checks. ${displayTimeZone ? "Use its startsAtLocal and timeZone for plain-language time descriptions." : "No outing time zone is set. Do not treat an option's ISO timestamp as the owner's local time; ask for the time zone before describing or choosing a local activity time."}`,
+        "For a new option, use an owner-provided date and time or fit a dated window from Owner availability windows below. Return startsAt as an ISO instant in the outing time zone. The response cutoff is not the activity date. If the activity or date/time cannot be chosen from the supplied details without guessing, return one focused clarification instead of an option. If no outing time zone is set, ask the owner to choose one before interpreting dates or local clock times; do not treat UTC as the owner's local time.",
         "A new option's estimatedCostCents is a generic per-person estimate, not a checked price or quote. Do not claim live restaurant availability, a booking, or a reservation. Do not put verified prices or booking claims in privateNote.",
         "Use only the owner's private conditions and rankings, the public catalog, participant names, resolved tie result, and approved shared offers below. A counterOfferToId must name a supplied shared offer owned by another participant, or be null. Do not disclose your privateNote to other people.",
         `Outing suggestion: ${JSON.stringify(input.outing.suggestion)}`,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { formatViewerDateTime, formatZonedTime } from "@/lib/cutoff";
+import { formatViewerDateTime, formatViewerTime, formatZonedTime } from "@/lib/cutoff";
 import type { MessageView, OutingView } from "@/lib/outings-api";
 
 const ERROR_COPY: Record<string, string> = {
@@ -15,8 +15,9 @@ const ERROR_COPY: Record<string, string> = {
   stale_reply: "Your conditions changed while the agent was replying. Continue in the latest chat turn.",
 };
 
-function timeLabel(iso: string, timeZone: string): string {
-  return formatZonedTime(new Date(iso), timeZone);
+function timeLabel(iso: string, timeZone: string | null): string {
+  const instant = new Date(iso);
+  return timeZone ? formatZonedTime(instant, timeZone) : formatViewerTime(instant);
 }
 
 type Props = {
@@ -72,7 +73,7 @@ export function OutingChat({ outing, initialMessages, showPlaybill = true, onCon
   }
 
   useEffect(() => {
-    setViewerCutoff(formatViewerDateTime(new Date(outing.cutoffAt)));
+    setViewerCutoff(outing.cutoffAt ? formatViewerDateTime(new Date(outing.cutoffAt)) : null);
   }, [outing.cutoffAt]);
 
   useEffect(() => {
@@ -214,13 +215,17 @@ export function OutingChat({ outing, initialMessages, showPlaybill = true, onCon
         <p className="playbill-kicker">Your outing</p>
         <h1>{outing.suggestion}</h1>
 
-        <div className="cutoff-card">
-          <p className="cutoff-label">Replies stop counting</p>
-          <time dateTime={outing.cutoffAt}>{outing.cutoffDisplay}</time>
-          {viewerCutoff && viewerCutoff !== outing.cutoffDisplay ? (
-            <p className="viewer-time">In your time zone: {viewerCutoff}</p>
-          ) : null}
-        </div>
+        {outing.cutoffAt && outing.cutoffDisplay ? (
+          <div className="cutoff-card">
+            <p className="cutoff-label">Replies stop counting</p>
+            <time dateTime={outing.cutoffAt}>{outing.cutoffDisplay}</time>
+            {viewerCutoff && viewerCutoff !== outing.cutoffDisplay ? (
+              <p className="viewer-time">In your time zone: {viewerCutoff}</p>
+            ) : null}
+          </div>
+        ) : (
+          <p className="no-cutoff-note">No response cutoff. Silence will not exclude anyone.</p>
+        )}
 
         <p className="privacy-note">
           Only you and your agent can read this chat. It belongs to this outing alone.

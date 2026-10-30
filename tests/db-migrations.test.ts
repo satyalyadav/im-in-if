@@ -89,7 +89,17 @@ describe("versioned starter-schema upgrade", () => {
       const versions = await db.query<{ version: number }>(
         `select version from schema_migrations order by version`,
       );
-      expect(versions.map((row) => row.version)).toEqual([1, 2, 3, 4]);
+      expect(versions.map((row) => row.version)).toEqual([1, 2, 3, 4, 5]);
+      const nullableColumns = await db.query<{ column_name: string; is_nullable: string }>(
+        `select column_name, is_nullable from information_schema.columns
+          where table_name = 'outings'
+            and column_name in ('cutoff_at', 'cutoff_time_zone', 'creation_request_id')`,
+      );
+      expect(Object.fromEntries(nullableColumns.map((row) => [row.column_name, row.is_nullable]))).toEqual({
+        cutoff_at: "YES",
+        cutoff_time_zone: "YES",
+        creation_request_id: "YES",
+      });
     } finally {
       await pg.close();
     }
@@ -150,7 +160,7 @@ describe("version 4 migration", () => {
       const versions = await db.query<{ version: number }>(
         `select version from schema_migrations order by version`,
       );
-      expect(versions.map((row) => row.version)).toEqual([1, 2, 3, 4]);
+      expect(versions.map((row) => row.version)).toEqual([1, 2, 3, 4, 5]);
     } finally {
       await pg.close();
     }

@@ -16,9 +16,10 @@ const BASE_SCHEMA = [
     id uuid primary key,
     starter_user_id text not null,
     suggestion text not null check (char_length(suggestion) between 1 and 400),
-    cutoff_at timestamptz not null,
-    cutoff_time_zone text not null,
+    cutoff_at timestamptz,
+    cutoff_time_zone text,
     invite_token text,
+    creation_request_id uuid,
     status text not null default 'planning',
     cutoff_processed_at timestamptz,
     ended_at timestamptz,
@@ -58,6 +59,7 @@ const BASE_SCHEMA = [
     role text not null check (role in ('user', 'agent')),
     content text not null check (char_length(content) between 1 and 12000),
     client_message_id text,
+    processing_started_at timestamptz,
     reply_to_message_id uuid references messages (id) on delete cascade,
     status text not null,
     error_code text,
@@ -188,6 +190,27 @@ const BASE_SCHEMA = [
     created_at timestamptz not null default now(),
     sent_at timestamptz,
     unique (outing_id, recipient_user_id, event_type, event_key)
+  )`,
+  `create table if not exists email_invitations (
+    id uuid primary key,
+    outing_id uuid not null references outings (id) on delete cascade,
+    created_by_user_id text not null,
+    recipient_email text not null,
+    normalized_recipient_email text not null,
+    send_request_id uuid not null,
+    invite_token text not null unique,
+    status text not null default 'pending'
+      check (status in ('pending', 'sending', 'sent', 'failed', 'disabled')),
+    error_code text,
+    attempt_count integer not null default 0 check (attempt_count between 0 and 3),
+    attempted_at timestamptz,
+    first_attempted_at timestamptz,
+    sent_at timestamptz,
+    accepted_by_user_id text,
+    accepted_at timestamptz,
+    created_at timestamptz not null default now(),
+    unique (outing_id, normalized_recipient_email),
+    unique (created_by_user_id, send_request_id)
   )`,
   `create table if not exists maintenance_state (
     singleton boolean primary key default true check (singleton),
@@ -321,6 +344,24 @@ begin
 end
 $im_in_if_migration_v4$`;
 
+const VERSION_5_MIGRATION = `
+do $im_in_if_migration_v5$
+begin
+  if not exists (select 1 from schema_migrations where version = 5) then
+    alter table outings alter column cutoff_at drop not null;
+    alter table outings alter column cutoff_time_zone drop not null;
+    alter table outings add column if not exists creation_request_id uuid;
+    alter table messages add column if not exists processing_started_at timestamptz;
+    create unique index if not exists outings_owner_creation_request_unique
+      on outings (starter_user_id, creation_request_id)
+      where creation_request_id is not null;
+    create index if not exists email_invitations_outing_idx
+      on email_invitations (outing_id, created_at desc);
+    insert into schema_migrations (version) values (5);
+  end if;
+end
+$im_in_if_migration_v5$`;
+
 export async function migrate(db: Db): Promise<void> {
   await db.transaction([
     { text: `select pg_advisory_xact_lock(87123562)` },
@@ -329,6 +370,7 @@ export async function migrate(db: Db): Promise<void> {
     { text: VERSION_2_MIGRATION },
     { text: VERSION_3_MIGRATION },
     { text: VERSION_4_MIGRATION },
+    { text: VERSION_5_MIGRATION },
   ]);
 }
 

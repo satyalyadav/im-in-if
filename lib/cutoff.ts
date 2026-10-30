@@ -126,6 +126,14 @@ export function formatViewerDateTime(instant: Date, locale?: string): string {
   }).format(instant);
 }
 
+export function formatViewerTime(instant: Date, locale?: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(instant);
+}
+
 /**
  * Resolves an explicitly supplied wall-clock date, time, and IANA zone to an
  * instant. The app never guesses a cutoff. When a fall-back transition repeats

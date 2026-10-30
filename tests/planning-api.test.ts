@@ -116,6 +116,36 @@ async function admit(
   expect(decision.status).toBe(200);
 }
 
+describe("outings without response cutoffs", () => {
+  it("keeps planning open and returns a null-safe workspace", async () => {
+    const created = await createOuting(context(STARTER), {
+      suggestion: "Coffee sometime",
+      requestId: crypto.randomUUID(),
+    });
+    expect(created.status).toBe(201);
+    const outingId = (created.body.outing as { id: string }).id;
+    await db.query(
+      `update participant_preferences
+          set interpretation = $3::jsonb, interpretation_ready = true
+        where outing_id = $1 and user_id = $2`,
+      [outingId, STARTER, JSON.stringify(emptyConditionInterpretation())],
+    );
+
+    const interest = await handlePlanningAction(context(STARTER), outingId, {
+      action: "set_interest",
+      interested: true,
+    });
+    expect(interest.status).toBe(200);
+
+    const workspace = await getOutingWorkspace(context(STARTER), outingId);
+    expect(workspace.status).toBe(200);
+    expect(workspace.body).toMatchObject({
+      outing: { cutoffAt: null, cutoffTimeZone: null },
+      myResponseStatus: "interested",
+    });
+  });
+});
+
 describe("invitation admission and participant privacy", () => {
   it("keeps pending requests out of the outing and accepts opt-in only for a verified account email", async () => {
     const outing = await makeOuting();

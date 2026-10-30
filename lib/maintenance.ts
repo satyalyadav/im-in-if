@@ -74,7 +74,7 @@ async function runSweep(db: Db, timestamp: string): Promise<SweepResult> {
   await db.query(
     `with due as (
        select id from outings
-        where cutoff_at <= $1::timestamptz
+        where cutoff_at is not null and cutoff_at <= $1::timestamptz
           and cutoff_processed_at is null
           and ended_at is null
      )
@@ -89,7 +89,7 @@ async function runSweep(db: Db, timestamp: string): Promise<SweepResult> {
   await db.query(
     `with due as (
        select id from outings
-        where cutoff_at <= $1::timestamptz
+        where cutoff_at is not null and cutoff_at <= $1::timestamptz
           and cutoff_processed_at is null
           and ended_at is null
      )
@@ -113,7 +113,7 @@ async function runSweep(db: Db, timestamp: string): Promise<SweepResult> {
     `with claimed as (
        update outings
           set cutoff_processed_at = $1::timestamptz
-        where cutoff_at <= $1::timestamptz
+        where cutoff_at is not null and cutoff_at <= $1::timestamptz
           and cutoff_processed_at is null
         returning id
      )
@@ -170,14 +170,14 @@ export async function processOutingDeadlines(
         and p.response_status = 'pending'
         and exists (
           select 1 from outings o
-           where o.id = $1 and o.cutoff_at <= $2::timestamptz
+           where o.id = $1 and o.cutoff_at is not null and o.cutoff_at <= $2::timestamptz
              and o.cutoff_processed_at is null and o.ended_at is null
         )`,
     [outingId, timestamp],
   );
   await db.query(
     `update outings o set status = 'no_agreement', ended_at = $2::timestamptz
-      where o.id = $1 and o.cutoff_at <= $2::timestamptz
+      where o.id = $1 and o.cutoff_at is not null and o.cutoff_at <= $2::timestamptz
         and o.cutoff_processed_at is null and o.ended_at is null
         and not exists (
           select 1 from participants p where p.outing_id = o.id
@@ -191,7 +191,7 @@ export async function processOutingDeadlines(
   );
   await db.query(
     `update outings set cutoff_processed_at = $2::timestamptz
-      where id = $1 and cutoff_at <= $2::timestamptz and cutoff_processed_at is null`,
+      where id = $1 and cutoff_at is not null and cutoff_at <= $2::timestamptz and cutoff_processed_at is null`,
     [outingId, timestamp],
   );
   await db.query(
