@@ -640,6 +640,11 @@ export async function requestAdmission(
          from inserted i
        on conflict do nothing
        returning id
+     ), conversation as (
+       insert into messages (id, outing_id, owner_user_id, role, content, status, completed_at)
+       select $10, i.outing_id, $8, 'agent', $11, 'complete', now()
+         from inserted i
+       returning id
      ), email as (
        insert into email_outbox
          (id, outing_id, recipient_user_id, event_type, event_key, status, recipient_email)
@@ -665,6 +670,8 @@ export async function requestAdmission(
       participantId,
       outing.starter_user_id,
       crypto.randomUUID(),
+      crypto.randomUUID(),
+      `${parsed.data.displayName} requested to join the planning group. Tell me whether to admit or decline them.`,
     ],
   );
   if (!created[0]) return api(404, { error: "not_found" });
@@ -789,6 +796,18 @@ async function decideAdmission(
   }
   await dispatchOutbox(context.db, outing.id);
   return api(200, { ok: true });
+}
+
+export async function decideAdmissionFromMessage(
+  db: Db,
+  outingId: string,
+  actorUserId: string,
+  targetUserId: string,
+  decision: "admit" | "reject",
+): Promise<ApiResponse> {
+  const outing = await loadOuting(db, outingId);
+  if (!outing) return api(404, { error: "not_found" });
+  return decideAdmission({ db, userId: actorUserId }, outing, targetUserId, decision);
 }
 
 async function saveEmailPreferences(
