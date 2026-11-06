@@ -22,7 +22,7 @@ afterEach(async () => {
 async function newOuting(userId: string) {
   const result = await createOuting({ db, userId }, {
     suggestion: "Synthetic maintenance test",
-    cutoffDate: "2026-10-31",
+    cutoffDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
     cutoffTime: "19:30",
     cutoffTimeZone: "America/Phoenix",
   });
@@ -65,7 +65,7 @@ describe("optional response cutoffs", () => {
 async function confirmBeforeCutoff(starterUserId: string, nonresponderUserId: string) {
   const created = await createOuting({ db, userId: starterUserId }, {
     suggestion: "Synthetic early confirmation",
-    cutoffDate: "2026-10-31",
+    cutoffDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
     cutoffTime: "19:30",
     cutoffTimeZone: "America/Phoenix",
   });
@@ -75,7 +75,7 @@ async function confirmBeforeCutoff(starterUserId: string, nonresponderUserId: st
     action: "add_option",
     title: "Synthetic early option",
     activity: "Movie",
-    startsAt: "2026-11-02T02:00:00.000Z",
+    startsAt: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString(),
     estimatedCostCents: 900,
     activityTags: ["movie"],
   });
@@ -273,7 +273,7 @@ describe("durable global deadline and deletion sweep", () => {
     const userId = "approval-sweep-starter";
     const outingId = await newOuting(userId);
     const optionId = crypto.randomUUID();
-    const startsAt = "2026-11-01T02:00:00.000Z";
+    const startsAt = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString();
     await db.query(
       `insert into outing_options
         (id, outing_id, created_by_user_id, title, activity, starts_at,

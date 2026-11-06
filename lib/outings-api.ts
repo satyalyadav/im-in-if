@@ -218,6 +218,9 @@ async function applyAdmissionDecision(input: {
 }): Promise<string | null> {
   const decision = input.decision;
   if (!decision) return null;
+  if (input.outing.ended_at || input.outing.status === "no_agreement") {
+    return "This outing has ended.";
+  }
   if (input.outing.starter_user_id !== input.ownerUserId) {
     return "Only the starter can decide admission requests.";
   }

@@ -27,6 +27,10 @@ afterEach(async () => {
   await pg.close();
 });
 
+function futureAt(daysAhead: number, time: string): string {
+  return `${new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}T${time}:00.000Z`;
+}
+
 function ctx(userId: string, verifiedEmails: string[] = []) {
   return { db, userId, verifiedEmails };
 }
@@ -41,14 +45,14 @@ async function setupPlan(
 ) {
   const created = await createOuting(ctx(A), {
     suggestion: "Synthetic approval test",
-    cutoffDate: "2026-10-31",
+    cutoffDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
     cutoffTime: "19:30",
     cutoffTimeZone: "America/Phoenix",
   });
   const outing = created.body.outing as { id: string; inviteToken: string };
   for (const [title, startsAt] of [
-    ["Synthetic first option", "2026-11-02T02:00:00.000Z"],
-    ["Synthetic second option", "2026-11-02T03:00:00.000Z"],
+    ["Synthetic first option", futureAt(8, "02:00")],
+    ["Synthetic second option", futureAt(8, "03:00")],
   ]) {
     const option = await handlePlanningAction(ctx(A), outing.id, {
       action: "add_option",
