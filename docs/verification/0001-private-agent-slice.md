@@ -26,6 +26,10 @@ The PGlite integration tests in [`tests/outings-api.test.ts`](../../tests/outing
 
 On 2026-10-30, a local browser run used the production workspace UI, local auth, a fresh PGlite directory, and a stub OpenAI-compatible provider that returned the same structured tool reply the live agent returns. Signing in as `starter`, starting "Dinner with Sam on Friday", and sending "I'm in if it's under $30." produced the agent acknowledgment and saved `myResponseStatus: interested`, `myConditionsReady: true`, and `maxCostCents: 3000`. The page had no interest button and no condition-entry control; the only response display was the read-only "Your response: interested" line. Sending "I'm out." persisted `not_interested`, and a later "What time works?" left the response `not_interested` while the $30 condition remained. The stub provider replaced the live model only for this browser check; no deployed check or real model call is established by it.
 
+## Issue #19 browser demonstration
+
+On 2026-11-06, a two-profile local browser run used the production workspace UI, local auth, a fresh PGlite directory, and the stub provider. The starter created an outing and shared its invitation link. A second account in an incognito profile requested admission as "Guest"; the request appeared as a saved agent message in the starter's private chat and in the existing pending-request panel. The starter typed "Admit Guest." The server answered that Guest was admitted, the pending panel cleared, and Guest's invitation check redirected to the outing. The guest row remained `pending` for interest, so admission granted access only. The same run used the stub provider, not a live model or deployed instance.
+
 ## Repeatable demo recipe
 
 Use three separate synthetic sign-in accounts on the deployed Clerk development instance. The app's current Go configuration is DeepSeek only. Before making agent requests, check that the existing OpenCode Go subscription has included usage left and that Extra Usage is disabled. Stop when included usage is exhausted. Do not buy credits, upgrade, or enable Extra Usage.

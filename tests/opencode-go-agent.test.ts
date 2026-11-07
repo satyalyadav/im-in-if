@@ -211,6 +211,7 @@ function turnInput() {
     conditionsLocked: false,
     responseStatus: "pending" as const,
     participants: [{ userId: "owner-user", displayName: "Owner" }],
+    pendingAdmissions: [],
     sessionId: "ses_synthetic-conversation-1",
   };
 }

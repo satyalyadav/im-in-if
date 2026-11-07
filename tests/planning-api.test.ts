@@ -1,6 +1,6 @@
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentError, type Agent, type AgentTurnInput, type OfferGenerationInput } from "@/lib/agent";
+import { AgentError, type Agent, type AgentReply, type AgentTurnInput, type OfferGenerationInput } from "@/lib/agent";
 import { createPgliteDb, migrate, type Db } from "@/lib/db";
 import { createOuting, getOuting, sendMessage } from "@/lib/outings-api";
 import {
@@ -27,9 +27,11 @@ class FakeAgent implements Agent {
   offerCalls: OfferGenerationInput[] = [];
   candidate: OfferGenerationResult | null = null;
   offerError: AgentError | null = null;
+  replyBehavior: ((input: AgentTurnInput) => AgentReply | Promise<AgentReply>) | null = null;
 
   async reply(input: AgentTurnInput) {
     this.calls.push(structuredClone(input));
+    if (this.replyBehavior) return this.replyBehavior(input);
     return { text: "Synthetic reply." };
   }
 
@@ -55,6 +57,10 @@ afterEach(async () => {
   await pg.close();
 });
 
+function futureAt(daysAhead: number, time: string): string {
+  return `${new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}T${time}:00.000Z`;
+}
+
 function context(userId: string, verifiedEmails: string[] = []) {
   return { db, userId, verifiedEmails };
 }
@@ -63,9 +69,12 @@ async function makeOuting(
   agent = new FakeAgent(),
   options: { withFixtureOptions?: boolean; suggestion?: string } = {},
 ) {
+  const cutoffDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
   const created = await createOuting(context(STARTER), {
     suggestion: options.suggestion ?? "Synthetic movie plan",
-    cutoffDate: "2026-10-31",
+    cutoffDate,
     cutoffTime: "19:30",
     cutoffTimeZone: "America/Phoenix",
   });
@@ -73,8 +82,14 @@ async function makeOuting(
   const outingId = (created.body.outing as { id: string }).id;
   if (options.withFixtureOptions !== false) {
     for (const option of [
-      { title: "Synthetic late show", startsAt: "2026-11-02T02:00:00.000Z" },
-      { title: "Synthetic second show", startsAt: "2026-11-02T03:00:00.000Z" },
+      {
+        title: "Synthetic late show",
+        startsAt: new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+      {
+        title: "Synthetic second show",
+        startsAt: new Date(Date.now() + 9 * 24 * 60 * 60 * 1000).toISOString(),
+      },
     ]) {
       const added = await handlePlanningAction(context(STARTER), outingId, {
         action: "add_option",
@@ -350,7 +365,7 @@ describe("email preference and manual option actions", () => {
       action: "add_option",
       title: "Manual late show",
       activity: "Movie",
-      startsAt: "2026-11-02T02:00:00.000Z",
+      startsAt: futureAt(3, "02:00"),
       estimatedCostCents: 1100,
       activityTags: ["movie"],
     };
@@ -389,7 +404,7 @@ describe("model-generated offer boundary", () => {
       option: {
         title: "Sushi dinner",
         activity: "Sushi dinner",
-        startsAt: "2026-11-07T03:00:00.000Z",
+        startsAt: futureAt(3, "03:00"),
         estimatedCostCents: 4500,
         activityTags: ["sushi", "dinner"],
       },
@@ -479,7 +494,7 @@ describe("model-generated offer boundary", () => {
       option: {
         title: "Sushi dinner",
         activity: "Sushi dinner",
-        startsAt: "2026-11-07T03:00:00.000Z",
+        startsAt: futureAt(3, "03:00"),
         estimatedCostCents: 4500,
         activityTags: ["sushi", "dinner"],
       },
@@ -496,8 +511,8 @@ describe("model-generated offer boundary", () => {
 
     const ownerConditions = emptyConditionInterpretation();
     ownerConditions.hard.availableWindows = [{
-      startsAt: "2026-11-07T02:00:00.000Z",
-      endsAt: "2026-11-07T04:00:00.000Z",
+      startsAt: futureAt(3, "02:00"),
+      endsAt: futureAt(3, "04:00"),
     }];
     ownerConditions.hard.maxCostCents = 6000;
     ownerConditions.hard.requiredActivityTags = ["sushi"];
@@ -614,7 +629,7 @@ describe("model-generated offer boundary", () => {
       option: {
         title: "Sushi dinner",
         activity: "Sushi dinner",
-        startsAt: "2026-11-07T03:00:00.000Z",
+        startsAt: futureAt(3, "03:00"),
         estimatedCostCents: 4500,
         activityTags: ["sushi", "dinner"],
       },
@@ -658,7 +673,7 @@ describe("model-generated offer boundary", () => {
       option: {
         title: "Sushi dinner",
         activity: "Sushi dinner",
-        startsAt: "2026-11-07T03:00:00.000Z",
+        startsAt: futureAt(3, "03:00"),
         estimatedCostCents: 4500,
         activityTags: ["sushi", "dinner"],
       },
@@ -683,8 +698,8 @@ describe("model-generated offer boundary", () => {
     for (const [index, userId] of attendeeIds.entries()) {
       const conditions = emptyConditionInterpretation();
       conditions.hard.availableWindows = [{
-        startsAt: "2026-11-07T02:00:00.000Z",
-        endsAt: "2026-11-07T04:00:00.000Z",
+        startsAt: futureAt(3, "02:00"),
+        endsAt: futureAt(3, "04:00"),
       }];
       conditions.hard.maxCostCents = [6000, 5200, 5000][index];
       conditions.hard.requiredActivityTags = ["sushi"];
@@ -820,7 +835,7 @@ describe("model-generated offer boundary", () => {
         option: {
           title: "Sushi dinner",
           activity: "Sushi dinner",
-          startsAt: "2026-11-07T03:00:00.000Z",
+          startsAt: futureAt(3, "03:00"),
           estimatedCostCents: 45.5,
           activityTags: ["sushi"],
         },
@@ -837,7 +852,7 @@ describe("model-generated offer boundary", () => {
         option: {
           title: "Sushi dinner",
           activity: "Sushi dinner",
-          startsAt: "2026-11-07T03:00:00.000Z",
+          startsAt: futureAt(3, "03:00"),
           estimatedCostCents: 6500,
           activityTags: ["sushi"],
         },
@@ -881,7 +896,7 @@ describe("model-generated offer boundary", () => {
       `insert into outing_options
         (id, outing_id, created_by_user_id, title, activity, starts_at,
          estimated_cost_cents, activity_tags, source)
-       values ($1, $2, $3, 'Old movie option', 'Movie', '2026-11-02T02:00:00Z',
+       values ($1, $2, $3, 'Old movie option', 'Movie', '${futureAt(3, "02:00")}',
                900, '["movie"]', 'sample')`,
       [sampleOptionId, outing.id, STARTER],
     );
@@ -890,7 +905,7 @@ describe("model-generated offer boundary", () => {
         `insert into offers
           (id, outing_id, owner_user_id, option_id, activity, starts_at,
            estimated_cost_cents, attendee_user_ids, activity_tags, private_note, status)
-         values ($1, $2, $3, $4, 'Movie', '2026-11-02T02:00:00Z', 900,
+         values ($1, $2, $3, $4, 'Movie', '${futureAt(3, "02:00")}', 900,
                  $5::jsonb, '["movie"]', '', $6)`,
         [offerId, outing.id, STARTER, sampleOptionId, JSON.stringify([STARTER]), status],
       );
@@ -898,7 +913,7 @@ describe("model-generated offer boundary", () => {
     agent.candidate = {
       optionId: sampleOptionId,
       activity: "Movie",
-      startsAt: "2026-11-02T02:00:00.000Z",
+      startsAt: futureAt(3, "02:00"),
       estimatedCostCents: 900,
       activityTags: ["movie"],
       attendeeUserIds: [STARTER],
@@ -936,7 +951,7 @@ describe("model-generated offer boundary", () => {
       `insert into proposals
         (id, outing_id, revision, created_by_user_id, option_id, activity, starts_at,
          estimated_cost_cents, attendee_user_ids, status, kind, published_at, expires_at, confirmed_at)
-       values ($1, $2, 1, $3, $4, 'Movie', '2026-11-02T02:00:00Z', 900,
+       values ($1, $2, 1, $3, $4, 'Movie', '${futureAt(3, "02:00")}', 900,
                $5::jsonb, 'confirmed', 'initial', now(), now() + interval '30 minutes', now())`,
       [proposalId, outing.id, STARTER, sampleOptionId, JSON.stringify([STARTER])],
     );
@@ -967,8 +982,8 @@ describe("model-generated offer boundary", () => {
     await admit(outing.id, outing.inviteToken, GUEST, "guest@example.test");
     const interpretation = emptyConditionInterpretation();
     interpretation.hard.availableWindows = [{
-      startsAt: "2026-11-01T02:01:00.000Z",
-      endsAt: "2026-11-01T06:00:00.000Z",
+      startsAt: futureAt(3, "02:01"),
+      endsAt: futureAt(3, "06:00"),
     }];
     await db.query(
       `update participant_preferences set interpretation = $3::jsonb, interpretation_ready = true
@@ -1344,5 +1359,181 @@ describe("tie polling regressions", () => {
       action: "answer_tie", pollId, answer: "either",
     });
     expect(last).toMatchObject({ status: 200, body: { status: "resolved", outcome: "either" } });
+  });
+});
+
+describe("chat admission decisions", () => {
+  async function admissionStatus(outingId: string, userId: string) {
+    const rows = await db.query<{ admission_status: string; response_status: string }>(
+      `select admission_status, response_status from participants
+        where outing_id = $1 and user_id = $2`,
+      [outingId, userId],
+    );
+    return rows[0];
+  }
+
+  it("shows a pending request in the starter chat and admits by typed name", async () => {
+    const outing = await makeOuting();
+    await requestAdmission(context(GUEST), outing.inviteToken, {
+      displayName: "Guest",
+      emailOptIn: false,
+      email: null,
+    });
+    outing.agent.replyBehavior = (input) => {
+      expect(input.pendingAdmissions).toEqual([{ userId: GUEST, displayName: "Guest" }]);
+      return {
+        text: "Guest is admitted.",
+        admissionDecision: { targetName: "Guest", decision: "admit" },
+      };
+    };
+
+    const sent = await sendMessage({ ...context(STARTER), agent: outing.agent }, outing.id, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Admit Guest.",
+    });
+
+    expect(sent.status).toBe(200);
+    expect((sent.body.messages as Array<{ content: string }>).at(-1)?.content)
+      .toContain("Guest is now admitted");
+    await expect(admissionStatus(outing.id, GUEST)).resolves.toMatchObject({
+      admission_status: "admitted",
+      response_status: "pending",
+    });
+    const workspace = await getOutingWorkspace(context(STARTER), outing.id);
+    expect(workspace.body.pendingAdmissions).toEqual([]);
+    expect((workspace.body.participants as Array<{ displayName: string }>).map((person) => person.displayName))
+      .toContain("Guest");
+    expect((workspace.body.messages as Array<{ content: string }>).some(
+      (message) => message.content.includes("Guest requested to join"),
+    )).toBe(true);
+  });
+
+  it("does not let an admitted non-starter decide a request", async () => {
+    const outing = await makeOuting();
+    await admit(outing.id, outing.inviteToken, GUEST, "guest@example.test");
+    await requestAdmission(context(PENDING), outing.inviteToken, {
+      displayName: "Pending",
+      emailOptIn: false,
+      email: null,
+    });
+
+    const guestAgent = new FakeAgent();
+    guestAgent.replyBehavior = (input) => {
+      expect(input.pendingAdmissions).toEqual([]);
+      return {
+        text: "Admit Pending.",
+        admissionDecision: { targetName: "Pending", decision: "admit" },
+      };
+    };
+
+    const sent = await sendMessage({ ...context(GUEST), agent: guestAgent }, outing.id, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Admit Pending.",
+    });
+
+    expect(sent.status).toBe(200);
+    expect((sent.body.messages as Array<{ content: string }>).at(-1)?.content)
+      .toContain("Only the starter");
+    await expect(admissionStatus(outing.id, PENDING)).resolves.toMatchObject({
+      admission_status: "pending",
+    });
+  });
+
+  it("asks which person when a name matches more than one pending request", async () => {
+    const outing = await makeOuting();
+    for (const userId of ["sam-one", "sam-two"]) {
+      await requestAdmission(context(userId), outing.inviteToken, {
+        displayName: "Sam",
+        emailOptIn: false,
+        email: null,
+      });
+    }
+    outing.agent.replyBehavior = () => ({
+      text: "Admit Sam.",
+      admissionDecision: { targetName: "Sam", decision: "admit" },
+    });
+
+    const sent = await sendMessage({ ...context(STARTER), agent: outing.agent }, outing.id, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Admit Sam.",
+    });
+
+    expect(sent.status).toBe(200);
+    expect((sent.body.messages as Array<{ content: string }>).at(-1)?.content)
+      .toContain("More than one pending request");
+    await expect(admissionStatus(outing.id, "sam-one")).resolves.toMatchObject({
+      admission_status: "pending",
+    });
+    await expect(admissionStatus(outing.id, "sam-two")).resolves.toMatchObject({
+      admission_status: "pending",
+    });
+  });
+
+  it("declines a named request and denies the rejected account access", async () => {
+    const outing = await makeOuting();
+    await requestAdmission(context(GUEST), outing.inviteToken, {
+      displayName: "Guest",
+      emailOptIn: false,
+      email: null,
+    });
+    outing.agent.replyBehavior = (input) => input.history.at(-1)?.content === "Decline Guest."
+      ? {
+          text: "Guest was declined.",
+          admissionDecision: { targetName: "Guest", decision: "reject" },
+        }
+      : {
+          text: "I could not find that request.",
+          admissionDecision: { targetName: "Nobody", decision: "reject" },
+        };
+
+    const unknown = await sendMessage({ ...context(STARTER), agent: outing.agent }, outing.id, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Decline Nobody.",
+    });
+    expect((unknown.body.messages as Array<{ content: string }>).at(-1)?.content)
+      .toContain("couldn't match Nobody");
+
+    const declined = await sendMessage({ ...context(STARTER), agent: outing.agent }, outing.id, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Decline Guest.",
+    });
+    expect(declined.status).toBe(200);
+    expect((declined.body.messages as Array<{ content: string }>).at(-1)?.content)
+      .toContain("request to join was declined");
+    await expect(admissionStatus(outing.id, GUEST)).resolves.toMatchObject({
+      admission_status: "rejected",
+    });
+    expect((await getOutingWorkspace(context(GUEST), outing.id)).status).toBe(404);
+  });
+
+  it("applies a duplicate admission decision once", async () => {
+    const outing = await makeOuting();
+    await requestAdmission(context(GUEST), outing.inviteToken, {
+      displayName: "Guest",
+      emailOptIn: false,
+      email: null,
+    });
+    outing.agent.replyBehavior = () => ({
+      text: "Guest is admitted.",
+      admissionDecision: { targetName: "Guest", decision: "admit" },
+    });
+    const input = { clientMessageId: crypto.randomUUID(), content: "Admit Guest." };
+
+    const [first, second] = await Promise.all([
+      sendMessage({ ...context(STARTER), agent: outing.agent }, outing.id, input),
+      sendMessage({ ...context(STARTER), agent: outing.agent }, outing.id, input),
+    ]);
+
+    expect([first.status, second.status].every((status) => status < 300)).toBe(true);
+    expect(outing.agent.calls).toHaveLength(1);
+    await expect(admissionStatus(outing.id, GUEST)).resolves.toMatchObject({
+      admission_status: "admitted",
+    });
+    const messages = await db.query<{ content: string; role: string }>(
+      `select content, role from messages where outing_id = $1 and owner_user_id = $2 order by seq`,
+      [outing.id, STARTER],
+    );
+    expect(messages.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(messages.filter((message) => message.role === "agent")).toHaveLength(2);
   });
 });

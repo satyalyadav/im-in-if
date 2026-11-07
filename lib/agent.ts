@@ -62,6 +62,7 @@ export type AgentTurnInput = {
   conditionsLocked: boolean;
   responseStatus: ParticipantResponseStatus;
   participants: PublicParticipant[];
+  pendingAdmissions: PublicParticipant[];
   sessionId?: string;
 };
 
@@ -85,9 +86,15 @@ const AgentConditionUpdateSchema = z.object({
 
 export type AgentConditionUpdate = z.infer<typeof AgentConditionUpdateSchema>;
 
+const AdmissionDecisionSchema = z.object({
+  targetName: z.string().trim().min(1).max(64),
+  decision: z.enum(["admit", "reject"]),
+}).strict();
+
 const AgentReplySchema = z.object({
   text: z.string().trim().min(1).max(12_000),
   interestUpdate: z.enum(["interested", "not_interested"]).nullable(),
+  admissionDecision: AdmissionDecisionSchema.nullable().optional(),
   conditionUpdate: AgentConditionUpdateSchema.nullable(),
 }).strict();
 
@@ -104,6 +111,7 @@ const PrivatePlanOfferToolSchema = z.object({
 export type AgentReply = {
   text: string;
   interestUpdate?: "interested" | "not_interested" | null;
+  admissionDecision?: { targetName: string; decision: "admit" | "reject" } | null;
   conditionUpdate?: AgentConditionUpdate | null;
 };
 
@@ -216,6 +224,8 @@ function systemPrompt(input: AgentTurnInput): string {
     "If you ask a clarifying question about a condition, leave interestUpdate null and say the interest is not recorded yet.",
     "When the owner's message answers a pending question that followed their conditional interest, and their saved response is not already interested, set interestUpdate to 'interested'.",
     "When the owner is on the confirmed plan, do not change interest. Explain that a confirmed plan change goes through the existing request to leave the roster. When the response cutoff has passed, do not change interest.",
+    "Only the starter decides admission requests. If the owner is the starter and clearly asks to admit or decline a pending requester, set admissionDecision with that person's exact display name. If the name is missing, unknown, or ambiguous, leave admissionDecision unset and ask one focused question.",
+    "Admission grants access to the planning group only. It does not record interest, add anyone to an attendee list, or confirm attendance. A non-starter must not decide admission.",
     "When returning a condition update, include every field and copy unchanged values from the current saved state. Keep empty list fields as empty lists and keep a missing spending cap as null.",
     "Preserve every saved hard condition across turns. Never weaken or remove one unless the owner explicitly asks for that change. A generic thanks, off-topic message, or answer that does not resolve the question must not change conditions or count as confirmation.",
     "Treat only limits the owner states as required as hard. Put ordinary likes and tradeoffs in flexiblePreferences.",
@@ -227,6 +237,7 @@ function systemPrompt(input: AgentTurnInput): string {
     `The owner's saved interest response is ${JSON.stringify(input.responseStatus)}.`,
     `The owner has ${input.conditionsLocked ? "confirmed a plan, so conditions are locked" : "not confirmed a plan with locked conditions"}.`,
     `Admitted people: ${JSON.stringify(input.participants.map((participant) => participant.displayName))}`,
+    `Pending admission requests visible to the starter: ${JSON.stringify(input.pendingAdmissions.map((participant) => participant.displayName))}`,
     "Keep replies concise and plain. Use no Markdown headings or asterisks.",
   ].join("\n");
 }
@@ -513,7 +524,7 @@ function createAgent(options: ProviderOptions): Agent {
           })),
           tools: {
             private_plan_reply: tool({
-              description: "Return the private natural-language reply, any validated interest change, and the complete current condition state.",
+              description: "Return the private natural-language reply, any validated interest or admission change, and the complete current condition state.",
               inputSchema: AgentReplySchema,
             }),
           },

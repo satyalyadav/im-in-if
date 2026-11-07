@@ -205,6 +205,63 @@ async function loadHistory(
   return [...rows, { role: "user" as const, content: current.content }];
 }
 
+function normalizedName(value: string): string {
+  return value.trim().toLocaleLowerCase("en-US");
+}
+
+async function applyAdmissionDecision(input: {
+  db: Db;
+  outing: OutingRow;
+  ownerUserId: string;
+  pendingAdmissions: PublicParticipant[];
+  decision: { targetName: string; decision: "admit" | "reject" } | null;
+}): Promise<string | null> {
+  const decision = input.decision;
+  if (!decision) return null;
+  if (input.outing.ended_at || input.outing.status === "no_agreement") {
+    return "This outing has ended.";
+  }
+  if (input.outing.starter_user_id !== input.ownerUserId) {
+    return "Only the starter can decide admission requests.";
+  }
+  const targetName = normalizedName(decision.targetName);
+  const matches = input.pendingAdmissions.filter(
+    (participant) => normalizedName(participant.displayName) === targetName,
+  );
+  if (matches.length === 0) {
+    return `I couldn't match ${decision.targetName} to a pending admission request. Who should I ${
+      decision.decision === "admit" ? "admit" : "decline"
+    }?`;
+  }
+  if (matches.length > 1) {
+    return `More than one pending request is named ${decision.targetName}. Which person did you mean?`;
+  }
+
+  const target = matches[0];
+  try {
+    const { decideAdmissionFromMessage } = await import("@/lib/planning-api");
+    const result = await decideAdmissionFromMessage(
+      input.db,
+      input.outing.id,
+      input.ownerUserId,
+      target.userId,
+      decision.decision,
+    );
+    if (result.status < 300) {
+      return decision.decision === "admit"
+        ? `${target.displayName} is now admitted to the planning group. Admission does not record interest or attendance.`
+        : `${target.displayName}'s request to join was declined.`;
+    }
+    const expectedStatus = decision.decision === "admit" ? "admitted" : "rejected";
+    if (result.status === 409 && result.body.status === expectedStatus) {
+      return `${target.displayName} was already ${expectedStatus}.`;
+    }
+    return "I couldn't save that admission decision. The request may have changed.";
+  } catch {
+    return "I couldn't save that admission decision. The request may have changed.";
+  }
+}
+
 async function generateReply(
   context: AgentContext,
   outing: OutingRow,
@@ -249,7 +306,7 @@ async function generateReply(
        values ($1, $2) on conflict (outing_id, user_id) do nothing`,
       [outing.id, context.userId],
     );
-    const [sessions, preferenceRows, participantRows, lockedRows] = await Promise.all([
+    const [sessions, preferenceRows, participantRows, pendingAdmissionRows, lockedRows] = await Promise.all([
       context.db.query<{ agent_session_id: string; response_status: ParticipantResponseStatus }>(
         `select agent_session_id, response_status from participants
           where outing_id = $1 and user_id = $2 and admission_status = 'admitted'`,
@@ -267,6 +324,12 @@ async function generateReply(
       context.db.query<{ user_id: string; display_name: string }>(
         `select user_id, display_name from participants
           where outing_id = $1 and admission_status = 'admitted'
+          order by created_at`,
+        [outing.id],
+      ),
+      context.db.query<{ user_id: string; display_name: string }>(
+        `select user_id, display_name from participants
+          where outing_id = $1 and admission_status = 'pending'
           order by created_at`,
         [outing.id],
       ),
@@ -288,6 +351,12 @@ async function generateReply(
       userId: participant.user_id,
       displayName: participant.display_name,
     }));
+    const pendingAdmissions: PublicParticipant[] = outing.starter_user_id === context.userId
+      ? pendingAdmissionRows.map((participant) => ({
+          userId: participant.user_id,
+          displayName: participant.display_name,
+        }))
+      : [];
 
     const agentReply = await context.agent.reply({
       outing: {
@@ -301,6 +370,7 @@ async function generateReply(
       conditionsLocked: lockedRows[0]?.locked ?? false,
       responseStatus: sessions[0].response_status,
       participants,
+      pendingAdmissions,
       sessionId: sessions[0].agent_session_id,
     });
 
@@ -335,6 +405,14 @@ async function generateReply(
           !/I[’']ve noted that you're not interested/i.test(interest.text)
         ? `${interest.text.trim()} I've noted that you're not interested.`
         : interest.text;
+    const admissionText = await applyAdmissionDecision({
+      db: context.db,
+      outing,
+      ownerUserId: context.userId,
+      pendingAdmissions,
+      decision: agentReply.admissionDecision ?? null,
+    });
+    const finalReplyText = admissionText ?? replyText;
     const conditionsReady = interest.refusedForCutoff
       ? stored.interpretation_ready
       : condition.ready || interest.markConditionsReady;
@@ -481,7 +559,7 @@ async function generateReply(
         interest.interest,
         sessions[0].response_status,
         crypto.randomUUID(),
-        replyText,
+        finalReplyText,
         finalInterpretation ? JSON.stringify(finalInterpretation) : null,
         conditionsReady,
       ],
