@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { formatViewerDateTime, formatViewerTime, formatZonedTime } from "@/lib/cutoff";
+import { formatViewerDateTime, formatViewerTime, formatZonedDateTime, formatZonedTime } from "@/lib/cutoff";
 import type { MessageView, OutingView } from "@/lib/outings-api";
+import type { PublicParticipant } from "@/lib/planning-types";
 
 const ERROR_COPY: Record<string, string> = {
   timeout: "Your agent took too long to answer. Your message is saved.",
@@ -20,14 +21,43 @@ function timeLabel(iso: string, timeZone: string | null): string {
   return timeZone ? formatZonedTime(instant, timeZone) : formatViewerTime(instant);
 }
 
+function dateTimeLabel(iso: string, timeZone: string | null): string {
+  const instant = new Date(iso);
+  return timeZone ? formatZonedDateTime(instant, timeZone) : formatViewerDateTime(instant);
+}
+
+function money(cents: number): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+}
+
+type ProposalAttachment = {
+  activity: string;
+  startsAt: string;
+  estimatedCostCents: number;
+  attendeeUserIds: string[];
+};
+
 type Props = {
   outing: OutingView;
   initialMessages: MessageView[];
+  proposal?: ProposalAttachment | null;
+  participants?: PublicParticipant[];
+  viewerUserId?: string;
+  myProposalApproved?: boolean;
   showPlaybill?: boolean;
   onConversationUpdate?: () => Promise<void> | void;
 };
 
-export function OutingChat({ outing, initialMessages, showPlaybill = true, onConversationUpdate }: Props) {
+export function OutingChat({
+  outing,
+  initialMessages,
+  proposal = null,
+  participants = [],
+  viewerUserId,
+  myProposalApproved = false,
+  showPlaybill = true,
+  onConversationUpdate,
+}: Props) {
   const [messages, setMessages] = useState(initialMessages);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -307,6 +337,27 @@ export function OutingChat({ outing, initialMessages, showPlaybill = true, onCon
             );
           })}
         </div>
+
+        {proposal && viewerUserId && proposal.attendeeUserIds.includes(viewerUserId) ? (
+          <section className="chat-plan" aria-label="Plan waiting for approval">
+            <p className="plan-kicker">Plan waiting for your approval</p>
+            <h2>{proposal.activity}</h2>
+            <p className="plan-meta">
+              {dateTimeLabel(proposal.startsAt, outing.cutoffTimeZone)} · Estimated{" "}
+              {money(proposal.estimatedCostCents)} per person
+            </p>
+            <p className="plan-attendees">
+              With {proposal.attendeeUserIds.map((userId) =>
+                participants.find((person) => person.userId === userId)?.displayName ?? "a participant",
+              ).join(", ")}
+            </p>
+            <p className="plan-request">
+              {myProposalApproved
+                ? "You confirmed this plan. It still needs everyone else."
+                : "Your agent is asking you to confirm this exact plan."}
+            </p>
+          </section>
+        ) : null}
 
         {error ? (
           <p className="chat-error" role="alert">

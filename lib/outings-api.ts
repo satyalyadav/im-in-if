@@ -596,6 +596,13 @@ async function generateReply(
         : { status: 409, body: { messageId: userMessage.id, error: "stale_reply" } };
     }
 
+    try {
+      const { autoProposeForOwner } = await import("@/lib/planning-api");
+      await autoProposeForOwner(context.db, outing.id, context.userId, context.agent);
+    } catch {
+      console.error("automatic proposal failed");
+    }
+
     return {
       status: successStatus,
       body: {

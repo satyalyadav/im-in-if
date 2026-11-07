@@ -30,6 +30,10 @@ On 2026-10-30, a local browser run used the production workspace UI, local auth,
 
 On 2026-11-06, a two-profile local browser run used the production workspace UI, local auth, a fresh PGlite directory, and the stub provider. The starter created an outing and shared its invitation link. A second account in an incognito profile requested admission as "Guest"; the request appeared as a saved agent message in the starter's private chat and in the existing pending-request panel. The starter typed "Admit Guest." The server answered that Guest was admitted, the pending panel cleared, and Guest's invitation check redirected to the outing. The guest row remained `pending` for interest, so admission granted access only. The same run used the stub provider, not a live model or deployed instance.
 
+## Issue #20 browser demonstration
+
+On 2026-11-06, a local browser run of the production workspace UI used local auth, a fresh PGlite database, and the stub provider. After the starter sent "I'm in if it's under $30.", the server generated and published one tentative proposal without the catalog or offer buttons. The private chat showed a compact plan card with the activity, date and time with time zone, estimated per-person cost, and attendee names. The card contained no revision selector. At 1280 by 800 and at 390 by 844 the card fit inside the viewport with no horizontal overflow. The underlying proposal remained a revision 1 approval target. This used the stub provider, not a live model or deployed instance.
+
 ## Repeatable demo recipe
 
 Use three separate synthetic sign-in accounts on the deployed Clerk development instance. The app's current Go configuration is DeepSeek only. Before making agent requests, check that the existing OpenCode Go subscription has included usage left and that Extra Usage is disabled. Stop when included usage is exhausted. Do not buy credits, upgrade, or enable Extra Usage.

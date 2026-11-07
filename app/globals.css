@@ -696,6 +696,42 @@ a {
   font-size: 0.82rem;
 }
 
+.chat-plan {
+  display: grid;
+  gap: 4px;
+  margin: 0 18px 14px;
+  padding: 12px 15px;
+  border: 1px solid #c9a24e;
+  background: #fff9e8;
+  color: var(--ink);
+}
+
+.chat-plan .plan-kicker {
+  margin: 0;
+  color: #7a5c1d;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.chat-plan h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.2rem;
+  line-height: 1.2;
+}
+
+.chat-plan p {
+  margin: 0;
+  color: #4a6154;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.chat-plan .plan-request {
+  color: #6f5a23;
+}
+
 .composer {
   display: flex;
   gap: 10px;
