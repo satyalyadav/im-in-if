@@ -1197,6 +1197,66 @@ async function generateOffer(
   }
 }
 
+export async function autoProposeForOwner(
+  db: Db,
+  outingId: string,
+  ownerUserId: string,
+  agent: Agent,
+): Promise<ApiResponse> {
+  const outing = await loadOuting(db, outingId);
+  if (!outing || outing.ended_at || outing.status === "no_agreement") {
+    return api(409, { error: "outing_not_active" });
+  }
+  if (!agent.generateOffer) return api(409, { error: "agent_unavailable" });
+  const context: OwnerContext = { db, userId: ownerUserId };
+  const ownRows = await db.query<{
+    interpretation_ready: boolean;
+    interpretation: unknown;
+    response_status: string;
+  }>(
+    `select pref.interpretation_ready, pref.interpretation, p.response_status
+       from participants p
+       join participant_preferences pref
+         on pref.outing_id = p.outing_id and pref.user_id = p.user_id
+      where p.outing_id = $1 and p.user_id = $2 and p.admission_status = 'admitted'`,
+    [outingId, ownerUserId],
+  );
+  const own = ownRows[0];
+  if (!own?.interpretation_ready || !own.interpretation || own.response_status !== "interested") {
+    return api(409, { error: "interest_required" });
+  }
+  const conditions = parseJsonValue(own.interpretation, emptyConditionInterpretation());
+  if (conditions.clarifyingQuestions.length > 0) {
+    return api(409, { error: "clarification_required" });
+  }
+  if (await latestProposal(db, outingId, "published")) {
+    return api(200, { status: "proposal_active" });
+  }
+  if (await latestProposal(db, outingId, "confirmed")) {
+    return api(200, { status: "plan_confirmed" });
+  }
+
+  let offerId: string | null = null;
+  const drafts = await db.query<{ id: string }>(
+    `select id from offers
+      where outing_id = $1 and owner_user_id = $2 and status = 'draft'
+      order by created_at desc limit 1`,
+    [outingId, ownerUserId],
+  );
+  if (drafts[0]) {
+    const published = await publishOffer(context, outingId, drafts[0].id);
+    if (published.status < 300) offerId = drafts[0].id;
+  }
+  if (!offerId) {
+    const generated = await generateOffer(context, outing, () => agent);
+    if (generated.status !== 201) return generated;
+    offerId = (generated.body.offer as { id: string }).id;
+    const published = await publishOffer(context, outingId, offerId);
+    if (published.status >= 300) return published;
+  }
+  return publishProposal(context, outing, offerId, "initial");
+}
+
 async function loadRecentOwnerConversation(
   db: Db,
   outingId: string,

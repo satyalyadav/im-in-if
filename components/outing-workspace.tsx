@@ -565,6 +565,10 @@ export function OutingWorkspace({ initialWorkspace }: { initialWorkspace: Worksp
         <OutingChat
           outing={outing}
           initialMessages={workspace.messages}
+          proposal={workspace.proposal}
+          participants={workspace.participants}
+          viewerUserId={workspace.viewerUserId}
+          myProposalApproved={workspace.myProposalApproved}
           showPlaybill={false}
           onConversationUpdate={refresh}
         />

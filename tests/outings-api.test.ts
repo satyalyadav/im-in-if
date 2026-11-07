@@ -8,7 +8,11 @@ import {
   type AgentTurnInput,
 } from "@/lib/agent";
 import { createPgliteDb, migrate, type Db } from "@/lib/db";
-import { emptyConditionInterpretation, parseJsonValue } from "@/lib/planning-types";
+import {
+  emptyConditionInterpretation,
+  parseJsonValue,
+  type OfferGenerationResult,
+} from "@/lib/planning-types";
 import {
   createOuting,
   getOuting,
@@ -29,6 +33,15 @@ class FakeAgent implements Agent {
     this.calls.push(structuredClone(input));
     const result = await this.behavior(input);
     return typeof result === "string" ? { text: result } : result;
+  }
+}
+
+class OfferAgent extends FakeAgent {
+  offerCandidate: OfferGenerationResult | null = null;
+
+  async generateOffer(): Promise<OfferGenerationResult> {
+    if (!this.offerCandidate) throw new AgentError("unavailable");
+    return structuredClone(this.offerCandidate);
   }
 }
 
@@ -1540,5 +1553,63 @@ describe("conversation interest", () => {
     });
     const messages = await savedMessages(outingId);
     expect(messages).toHaveLength(4);
+  });
+});
+
+describe("automatic recommendation", () => {
+  it("publishes one proposal after conditions are ready and reuses it", async () => {
+    const agent = new OfferAgent(() => ({
+      text: "You're in if it stays under $30.",
+      interestUpdate: "interested",
+      conditionUpdate: agentConditions({ maxCostCents: 3000 }),
+    }));
+    agent.offerCandidate = {
+      kind: "new_option",
+      option: {
+        title: "Dinner",
+        activity: "Dinner",
+        startsAt: futureIso(10),
+        estimatedCostCents: 2500,
+        activityTags: ["dinner"],
+      },
+      attendeeUserIds: [STARTER],
+      counterOfferToId: null,
+      privateNote: "",
+    };
+    const outingId = await makeOuting(agent);
+
+    const sent = await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "I'm in if it's under $30.",
+    });
+    expect(sent.status).toBe(200);
+
+    const proposals = await db.query<{
+      activity: string;
+      estimated_cost_cents: number;
+      status: string;
+      attendee_user_ids: unknown;
+    }>(
+      `select activity, estimated_cost_cents, status, attendee_user_ids
+         from proposals where outing_id = $1`,
+      [outingId],
+    );
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]).toMatchObject({
+      activity: "Dinner",
+      estimated_cost_cents: 2500,
+      status: "published",
+    });
+    expect(proposals[0].attendee_user_ids).toEqual([STARTER]);
+
+    await sendMessage(ctx(agent), outingId, {
+      clientMessageId: crypto.randomUUID(),
+      content: "Thanks.",
+    });
+    const after = await db.query<{ id: string }>(
+      `select id from proposals where outing_id = $1`,
+      [outingId],
+    );
+    expect(after).toHaveLength(1);
   });
 });
